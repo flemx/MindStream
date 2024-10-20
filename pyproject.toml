@@ -1,6 +1,10 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["crawler", "ingestor", "converter"]
 
 [project]
 name = "mindstream_project"
@@ -9,7 +13,7 @@ description = "A package for crawling data, converting JSON to CSV, and ingestin
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Damien Fleminks", email = "damien@fleminks.com"}
 ]
 dependencies = [
     "requests>=2.25.1",

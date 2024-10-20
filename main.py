@@ -1,8 +1,8 @@
 import os
 from config import ACCESS_TOKEN, INSTANCE_URL, OBJECT_API_NAME, SOURCE_NAME, MAX_CONCURRENT_JOBS, API_KEY, CRAWL_URL, WHITELIST
-from json_to_csv_converter import JSONToCSVConverter
-from data_cloud_bulk_ingest import DataCloudBulkIngest
-from crawler import DataCrawler
+from src.converter.json_to_csv_converter import JSONToCSVConverter
+from src.ingestor.data_cloud_bulk_ingest import DataCloudBulkIngest
+from src.crawler.data_crawler import DataCrawler
 
 if __name__ == "__main__":
     # Crawl data
