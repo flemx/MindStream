@@ -1,3 +1,4 @@
+# src/ingestor/data_cloud_bulk_ingest.py
 import requests
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,13 +23,14 @@ class DataCloudBulkIngest:
             "operation": "upsert"
         }
         response = requests.post(self.bulk_ingest_endpoint, headers=self.headers, json=job_data)
-        if response.status_code in [200, 201]:
+        if response.status_code in [200, 201, 202]:
             job_info = response.json()
             job_id = job_info.get('id')
             print(f"Created Bulk Ingest Job with ID: {job_id}")
             return job_id
         else:
-            print(f"Failed to create Bulk Ingest Job. Status code: {response.status_code}, Response: {response.text}")
+            print(f"Failed to create Bulk Ingest Job. Status code: {response.status_code}, "
+                  f"Response: Content: {response.text}, Headers: {dict(response.headers)}, URL: {response.url}")
             return None
 
     def upload_data_to_job(self, job_id, csv_file_path):
@@ -40,7 +42,7 @@ class DataCloudBulkIngest:
         with open(csv_file_path, 'r', encoding='utf-8') as csv_file:
             csv_data = csv_file.read()
         response = requests.put(upload_endpoint, headers=headers_upload, data=csv_data)
-        if response.status_code in [200, 201]:
+        if response.status_code in [200, 201, 202]:
             print(f"Uploaded data to Job ID: {job_id}")
             return True
         else:
@@ -53,7 +55,7 @@ class DataCloudBulkIngest:
             "state": "UploadComplete"
         }
         response = requests.patch(close_endpoint, headers=self.headers, json=close_data)
-        if response.status_code == 200:
+        if response.status_code in [200, 201, 202]:
             print(f"Closed Job ID: {job_id}")
             return True
         else:
@@ -64,10 +66,10 @@ class DataCloudBulkIngest:
         status_endpoint = f"{self.bulk_ingest_endpoint}/{job_id}"
         while True:
             response = requests.get(status_endpoint, headers=self.headers)
-            if response.status_code == 200:
+            if response.status_code in [200, 201, 202]:
                 job_info = response.json()
                 state = job_info.get('state')
-                print(f"Job ID: {job_id}, State: {state}")
+                print(f"Monitor Job ID: {job_id}, State: {state}")
                 if state in ['JobComplete', 'Failed', 'Aborted']:
                     break
                 else:
