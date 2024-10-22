@@ -103,8 +103,14 @@ class JSONToCSVConverter:
 
                         for obj in chunk_data:
                             try:
-                                raw_content = obj.get('content', "")
+                                raw_content = obj.get('content')
+                    
                                 cleaned_content = self.clean_html(raw_content)
+                                 # Skip this row if raw_content is None or empty
+                                if not cleaned_content or cleaned_content == "None" or cleaned_content is None or cleaned_content.strip() == "":
+                                    logging.info(f"Skipping row in {filename}: empty or None content")
+                                    continue
+
 
                                 title = obj.get('metadata', {}).get('title', "")
                                 doc_url = obj.get('url', "")
