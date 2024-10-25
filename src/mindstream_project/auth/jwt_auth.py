@@ -103,7 +103,7 @@ async def generate_access_token(username: str = None):
     """Generate access token for specified org or current org"""
     if not username:
         global_config = config_manager.get_global_config()
-        username = global_config.get('current_org')
+        username = global_config.current_org
         if not username:
             raise ValueError("No org specified and no current org set")
 

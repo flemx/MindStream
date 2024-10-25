@@ -13,25 +13,80 @@ from mindstream_project.utils.config_manager import ConfigManager
 import json
 from mindstream_project.utils.salesforce_cli import SalesforceCLI
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+from mindstream_project.models.global_config import CrawlerDefaults, IngestorDefaults
+from pathlib import Path
+import platform
 
 # Initialize ConfigManager at module level
 config_manager = ConfigManager()
 
 @click.group()
+@click.version_option(version='1.0.0')
 def cli():
-    """MindStream Project CLI"""
+    """MindStream CLI - Data Pipeline Management Tool
+    
+    Common Commands:
+      org         Manage Salesforce orgs and authentication
+      config      Manage global and org-specific configuration
+      crawl       Execute crawler to fetch data
+      convert     Convert JSON data to CSV format
+      upload      Upload CSV data to Data Cloud
+      pipeline    Run complete pipeline (crawl, convert, upload)
+      open        Open org config directory in file explorer
+    
+    Configuration Commands:
+      config crawler   Configure crawler settings
+      config ingestor  Configure ingestor settings
+    
+    Examples:
+      # Org Management
+      mindstream org add --alias myorg
+      mindstream org use myorg
+      mindstream org list
+      
+      # Configuration
+      mindstream config show
+      mindstream config crawler set --crawl-url URL --api-key KEY
+      mindstream config ingestor set --source-name NAME
+      
+      # Pipeline Operations
+      mindstream crawl --org myorg
+      mindstream convert --org myorg
+      mindstream upload --org myorg
+      mindstream pipeline --org myorg
+    
+    Use 'mindstream COMMAND --help' for detailed information about commands.
+    """
     pass
 
 @cli.group()
 def org():
-    """Manage Salesforce orgs and authentication"""
+    """Manage Salesforce orgs and authentication
+    
+    Commands:
+      add               Add and authenticate a new org
+      use               Set the current working org
+      list              List all connected orgs
+      login             Re-authenticate an existing org
+      regenerate-certs  Regenerate certificates for org(s)
+    """
     pass
 
 @org.command()
 @click.option('--alias', default=None, help='Alias for the Salesforce org')
 @click.option('--default', is_flag=True, help='Set this org as the default org')
 def add(alias, default):
-    """Add and authenticate a new Salesforce org"""
+    """Add and authenticate a new Salesforce org
+    
+    Examples:
+        mindstream org add --alias myorg
+        mindstream org add --alias myorg --default
+    
+    Options:
+        --alias    Optional alias for easier org reference
+        --default  Set this org as the default working org
+    """
     # Check if the org is already authenticated
     if SalesforceCLI.is_org_authenticated(alias):
         click.echo(f"Org with alias '{alias}' is already authenticated.")
@@ -79,7 +134,15 @@ def add(alias, default):
 @org.command()
 @click.argument('identifier')
 def use(identifier):
-    """Set the current working org using username or alias"""
+    """Set the current working org using username or alias
+    
+    Examples:
+        mindstream org use user@example.com
+        mindstream org use myorg
+    
+    Arguments:
+        identifier  Username or alias of the org to use
+    """
     # First, try to find username if an alias was provided
     username = SalesforceCLI.get_username_from_alias(identifier)
     if username:
@@ -103,9 +166,20 @@ def use(identifier):
 
 @org.command()
 def list():
-    """List all connected orgs and the default one"""
+    """List all connected orgs and the default one
+    
+    Shows username, alias (if set), and marks the default org.
+    
+    Example:
+        mindstream org list
+    
+    Output format:
+        Username: user@example.com, Alias: myorg (Default)
+        Username: other@example.com, Alias: otherorg
+    """
     orgs = config_manager.list_orgs()
-    default_org = config_manager.get_global_config().get('current_org')
+    global_config = config_manager.get_global_config()
+    default_org = global_config.current_org
     for org_username, config in orgs.items():
         alias = config.get('alias', '')
         default_marker = '(Default)' if org_username == default_org else ''
@@ -115,7 +189,16 @@ def list():
 @click.option('--username', help='Username of the org to regenerate certificates for')
 @click.option('--all-orgs', is_flag=True, help='Regenerate certificates for all orgs')
 def regenerate_certs(username, all_orgs):
-    """Regenerate certificates for specified org(s)"""
+    """Regenerate certificates for specified org(s)
+    
+    Examples:
+        mindstream org regenerate-certs --username user@example.com
+        mindstream org regenerate-certs --all-orgs
+    
+    Options:
+        --username   Username of specific org to regenerate certs for
+        --all-orgs  Regenerate certificates for all connected orgs
+    """
     if all_orgs:
         orgs = config_manager.list_orgs()
         for org_username in orgs:
@@ -132,7 +215,8 @@ def regenerate_certs(username, all_orgs):
         generate_certificates(org_dir)
         click.echo(f"Regenerated certificates for {username}")
     else:
-        current_org = config_manager.get_global_config().get('current_org')
+        global_config = config_manager.get_global_config()
+        current_org = global_config.current_org
         if not current_org:
             click.echo("No org selected. Please specify --username or use 'mindstream org use <username>'")
             return
@@ -170,127 +254,487 @@ def login(username):
     else:
         click.echo("Authentication failed.", err=True)
 
+def parse_additional_params(params: List[str]) -> Dict[str, Any]:
+    """Parse additional parameters from CLI input"""
+    result = {}
+    for param in params:
+        try:
+            key, value = param.split('=')
+            # Try to convert to appropriate type
+            try:
+                value = json.loads(value.lower())  # Handles true/false/null/numbers
+            except json.JSONDecodeError:
+                pass  # Keep as string if not a special value
+            result[key] = value
+        except ValueError:
+            click.echo(f"Warning: Skipping invalid parameter format: {param}")
+    return result
+
 @cli.group()
 def config():
-    """Manage global configuration"""
+    """Manage global and org-specific configuration
+    
+    Commands:
+      show            Show current configuration
+      crawler set     Configure crawler settings
+      ingestor set    Configure ingestor settings
+    
+    Examples:
+      mindstream config show
+      mindstream config show --crawler
+      mindstream config show --org myorg
+      mindstream config crawler set --page-limit 100
+      mindstream config ingestor set --source-name "custom_source"
+    """
+    pass
+
+@config.group()
+def crawler():
+    """Manage crawler configuration
+    
+    Options:
+      --page-limit    INT     Number of pages to crawl
+      --crawl-url     TEXT    URL to crawl
+      --api-key       TEXT    API key for crawler service
+      --whitelist     TEXT    Comma-separated list of allowed domains
+      --param, -p     TEXT    Additional parameters (key=value format)
+      --org           TEXT    Username or alias of org to configure
+    
+    Examples:
+      mindstream config crawler set --page-limit 100
+      mindstream config crawler set --crawl-url "https://example.com" --org myorg
+      mindstream config crawler set -p respect_robots=true -p custom_param=value
+    """
+    pass
+
+@config.group()
+def ingestor():
+    """Manage ingestor configuration
+    
+    Options:
+      --object-api-name      TEXT    Salesforce object API name
+      --source-name          TEXT    Source name for ingested data
+      --max-concurrent-jobs  INT     Maximum concurrent ingestion jobs
+      --org                  TEXT    Username or alias of org to configure
+    
+    Examples:
+      mindstream config ingestor set --object-api-name "CustomDoc"
+      mindstream config ingestor set --source-name "custom_source" --org myorg
+    """
     pass
 
 @config.command()
-def show():
-    """Show current global configuration"""
-    config_manager = ConfigManager()
-    global_config = config_manager.get_global_config()
-    click.echo(json.dumps(global_config, indent=2))
+@click.option('--crawler', is_flag=True, help='Show only crawler configuration')
+@click.option('--ingestor', is_flag=True, help='Show only ingestor configuration')
+@click.option('--org', help='Username or alias of the org to show configuration for')
+def show(crawler, ingestor, org):
+    """Show current configuration settings
+    
+    Display global defaults or org-specific configuration.
+    
+    Examples:
+        mindstream config show
+        mindstream config show --crawler
+        mindstream config show --ingestor
+        mindstream config show --org myorg
+    
+    Options:
+        --crawler   Show only crawler settings
+        --ingestor  Show only ingestor settings
+        --org       Show config for specific org (username or alias)
+    """
+    try:
+        config_manager = ConfigManager()
+        
+        if org:
+            target_username = resolve_username(org)
+            config = config_manager.get_org_config(target_username)
+            config_type = f"org configuration for {target_username}"
+        else:
+            config = config_manager.get_global_config()
+            config_type = "global configuration"
+        
+        if crawler:
+            if config.crawler:
+                click.echo(f"Crawler {config_type}:")
+                click.echo(json.dumps(config.crawler.to_dict(), indent=2))
+            else:
+                click.echo(f"No crawler configuration set for {config_type}")
+        elif ingestor:
+            if config.ingestor:
+                click.echo(f"Ingestor {config_type}:")
+                click.echo(json.dumps(config.ingestor.to_dict(), indent=2))
+            else:
+                click.echo(f"No ingestor configuration set for {config_type}")
+        else:
+            click.echo(f"Complete {config_type}:")
+            click.echo(json.dumps(config.to_dict(), indent=2))
+            
+    except click.UsageError as e:
+        click.echo(str(e), err=True)
 
-@config.command()
-@click.option('--page-limit', type=int, help='Set default page limit')
-@click.option('--object-api-name', help='Set default object API name')
-@click.option('--source-name', help='Set default source name')
-@click.option('--max-concurrent-jobs', type=int, help='Set default max concurrent jobs')
-@click.option('--crawl-url', help='Set default crawl URL')
-@click.option('--api-key', help='Set default API key')
-@click.option('--whitelist', help='Set default whitelist (comma-separated values)')
-def set(page_limit, object_api_name, source_name, max_concurrent_jobs, crawl_url, api_key, whitelist):
-    """Set global configuration values"""
-    config_manager = ConfigManager()
+@crawler.command()
+@click.option('--page-limit', type=int, help='Set page limit')
+@click.option('--crawl-url', help='Set crawl URL')
+@click.option('--api-key', help='Set API key')
+@click.option('--whitelist', help='Set whitelist (comma-separated values)')
+@click.option('--param', '-p', multiple=True, help='Additional parameters in key=value format')
+@click.option('--org', help='Username or alias of the org to configure')
+def set(page_limit, crawl_url, api_key, whitelist, param, org):
+    """Configure crawler settings
     
-    if page_limit is not None:
-        config_manager.set_default('page_limit', page_limit)
-        click.echo(f"Set default page_limit to {page_limit}")
+    Set crawler configuration globally or for a specific org.
     
-    if object_api_name is not None:
-        config_manager.set_default('object_api_name', object_api_name)
-        click.echo(f"Set default object_api_name to {object_api_name}")
+    Examples:
+        mindstream config crawler set --page-limit 100
+        mindstream config crawler set --crawl-url "https://example.com" --api-key "key"
+        mindstream config crawler set --whitelist "domain1.com,domain2.com"
+        mindstream config crawler set -p respect_robots=true -p custom_param=value
+        mindstream config crawler set --page-limit 200 --org myorg
     
-    if source_name is not None:
-        config_manager.set_default('source_name', source_name)
-        click.echo(f"Set default source_name to {source_name}")
+    Options:
+        --page-limit  Number of pages to crawl
+        --crawl-url   URL to crawl
+        --api-key     API key for crawler service
+        --whitelist   Comma-separated list of allowed domains
+        --param, -p   Additional parameters (key=value format)
+        --org         Configure for specific org (username or alias)
     
-    if max_concurrent_jobs is not None:
-        config_manager.set_default('max_concurrent_jobs', max_concurrent_jobs)
-        click.echo(f"Set default max_concurrent_jobs to {max_concurrent_jobs}")
-    
-    if crawl_url is not None:
-        config_manager.set_default('crawl_url', crawl_url)
-        click.echo(f"Set default crawl_url to {crawl_url}")
+    Additional Parameters:
+        Additional parameters can be set using -p or --param option.
+        Format: -p key=value
         
-    if api_key is not None:
-        config_manager.set_default('api_key', api_key)
-        click.echo(f"Set default api_key to {api_key}")
+        Common additional parameters:
+        - respect_robots=true/false
+        - metadata=true/false
+        - readability=true/false
+        - custom parameters as needed
+    """
+    try:
+        target_username = resolve_username(org) if org else None
+        config_manager = ConfigManager()
         
-    if whitelist is not None:
-        # Convert comma-separated string to list
-        whitelist_list = [item.strip() for item in whitelist.split(',')]
-        config_manager.set_default('whitelist', whitelist_list)
-        click.echo(f"Set default whitelist to {whitelist_list}")
+        # Determine if we're setting global or org-specific config
+        if target_username:
+            config = config_manager.get_org_config(target_username)
+            if not config.crawler:
+                config.crawler = CrawlerDefaults()
+        else:
+            config = config_manager.get_global_config()
+
+        # Update values if provided
+        if page_limit is not None:
+            config.crawler.page_limit = page_limit
+        if crawl_url is not None:
+            config.crawler.crawl_url = crawl_url
+        if api_key is not None:
+            config.crawler.api_key = api_key
+        if whitelist is not None:
+            config.crawler.whitelist = [x.strip() for x in whitelist.split(',')]
+        if param:
+            config.crawler.additional_params.update(parse_additional_params(param))
+
+        # Save the configuration
+        if target_username:
+            config_manager.set_org_config(target_username, config)
+            click.echo(f"Updated crawler configuration for org: {target_username}")
+        else:
+            config_manager.set_global_config(config)
+            click.echo("Updated global crawler configuration")
+            
+    except click.UsageError as e:
+        click.echo(str(e), err=True)
+
+@ingestor.command()
+@click.option('--object-api-name', help='Set object API name')
+@click.option('--source-name', help='Set source name')
+@click.option('--max-concurrent-jobs', type=int, help='Set max concurrent jobs')
+@click.option('--org', help='Username or alias of the org to configure')
+def set(object_api_name, source_name, max_concurrent_jobs, org):
+    """Configure ingestor settings
+    
+    Set ingestor configuration globally or for a specific org.
+    
+    Examples:
+        mindstream config ingestor set --object-api-name "CustomDoc"
+        mindstream config ingestor set --source-name "custom_source"
+        mindstream config ingestor set --max-concurrent-jobs 10
+        mindstream config ingestor set --source-name "org_source" --org myorg
+    
+    Options:
+        --object-api-name      Salesforce object API name
+        --source-name         Source name for ingested data
+        --max-concurrent-jobs Maximum concurrent ingestion jobs
+        --org                Configure for specific org (username or alias)
+    """
+    try:
+        target_username = resolve_username(org) if org else None
+        config_manager = ConfigManager()
+        
+        # Determine if we're setting global or org-specific config
+        if target_username:
+            config = config_manager.get_org_config(target_username)
+            if not config.ingestor:
+                config.ingestor = IngestorDefaults()
+        else:
+            config = config_manager.get_global_config()
+
+        # Update values if provided
+        if object_api_name is not None:
+            config.ingestor.object_api_name = object_api_name
+        if source_name is not None:
+            config.ingestor.source_name = source_name
+        if max_concurrent_jobs is not None:
+            config.ingestor.max_concurrent_jobs = max_concurrent_jobs
+
+        # Save the configuration
+        if target_username:
+            config_manager.set_org_config(target_username, config)
+            click.echo(f"Updated ingestor configuration for org: {target_username}")
+        else:
+            config_manager.set_global_config(config)
+            click.echo("Updated global ingestor configuration")
+            
+    except click.UsageError as e:
+        click.echo(str(e), err=True)
 
 @cli.command()
-def pipeline():
-    """Run the complete pipeline: crawl, convert, and ingest"""
-    config_manager = ConfigManager()
-    current_org = config_manager.get_global_config().get('current_org')
+@click.option('--org', help='Username or alias of the org to use')
+@click.option('--output-path', type=click.Path(), help='Custom path to store crawled data')
+@click.option('--page-limit', type=int, help='Override page limit')
+@click.option('--crawl-url', help='Override crawl URL')
+@click.option('--api-key', help='Override API key')
+@click.option('--whitelist', help='Override whitelist (comma-separated)')
+@click.option('--param', '-p', multiple=True, help='Additional parameters (key=value)')
+async def crawl(org, output_path, page_limit, crawl_url, api_key, whitelist, param):
+    """Execute the crawler to fetch data
     
-    if not current_org:
-        click.echo("No org selected. Please select an org using 'mindstream org use <username>'")
-        return
+    Crawls data using configured or overridden crawler settings.
+    Results are stored in the org's directory by default,
+    or in a custom location if specified.
     
-    org_dir = config_manager.get_org_path(current_org)
-    org_config = config_manager.get_org_config(current_org)
+    Examples:
+        mindstream crawl
+        mindstream crawl --org myorg
+        mindstream crawl --output-path ./custom/path
+        mindstream crawl --page-limit 100 --crawl-url "https://example.com"
+        mindstream crawl -p respect_robots=true -p custom_param=value
     
-    # Get crawl URL with validation
-    crawl_url = org_config.get('crawl_url', config_manager.get_default('crawl_url'))
-    if not crawl_url:
-        click.echo("Error: No crawl URL specified. Please set it using 'mindstream config set --crawl-url URL' or in org config")
-        return
-        
-    # Get API key with validation
-    api_key = org_config.get('api_key', config_manager.get_default('api_key'))
-    if not api_key:
-        click.echo("Error: No API key specified. Please set it using 'mindstream config set --api-key KEY' or in org config")
-        return
+    Configuration Options:
+        --org           Username or alias of the org to use
+        --output-path   Custom path to store crawled data
+        --page-limit    Override configured page limit
+        --crawl-url     Override configured crawl URL
+        --api-key       Override configured API key
+        --whitelist     Override configured whitelist (comma-separated)
+        --param, -p     Additional parameters in key=value format
     
-    # Update paths to use org-specific directories
-    output_folder = org_dir / "results"
-    csv_output_folder = org_dir / "csv_files"
-    
-    # Use org-specific configuration with global defaults
+    Additional Parameters:
+        Common -p options:
+        - respect_robots=true/false
+        - metadata=true/false
+        - readability=true/false
+        - Any other crawler-specific parameters
+    """
     try:
-        crawler = DataCrawler(
-            output_folder,
-            api_key,
-            crawl_url,
-            org_config.get('whitelist', config_manager.get_default('whitelist', [])),
-            org_config.get('page_limit', config_manager.get_default('page_limit', 50))
+        config = get_effective_config(org)
+        
+        # Create override crawler config
+        crawler_config = CrawlerDefaults(
+            page_limit=page_limit or config.crawler.page_limit,
+            crawl_url=crawl_url or config.crawler.crawl_url,
+            api_key=api_key or config.crawler.api_key,
+            whitelist=whitelist.split(',') if whitelist else config.crawler.whitelist
         )
         
-        crawler.crawl()
-    except ValueError as e:
-        click.echo(f"Error: {str(e)}")
-        return
+        if param:
+            crawler_config.additional_params.update(parse_additional_params(param))
+        
+        # Determine output path
+        output_folder = Path(output_path) if output_path else config_manager.get_org_path(config.username) / "results"
+        
+        # Execute crawler
+        crawler = DataCrawler(output_folder, crawler_config)
+        result = await crawler.crawl()
+        click.echo(f"Crawl completed. Results stored in: {result}")
+        
     except Exception as e:
-        click.echo(f"Error during crawl: {str(e)}")
-        return
+        click.echo(f"Error: {str(e)}", err=True)
 
-    # Convert JSON to CSV
-    converter = JSONToCSVConverter(output_folder, csv_output_folder)
-    converter.convert()
-
-    # Bulk Ingest to Data Cloud
-    csv_files = [
-        f for f in csv_output_folder.glob("*.csv")
-    ]
+@cli.command()
+@click.option('--org', help='Username or alias of the org to use')
+@click.option('--input-path', type=click.Path(exists=True), help='Path to JSON file or directory')
+@click.option('--output-path', type=click.Path(), help='Custom path to store CSV files')
+def convert(org, input_path, output_path):
+    """Convert JSON data to CSV format
     
-    bulk_ingest = DataCloudBulkIngest(
-        org_config['access_token'],
-        org_config['instance_url'],
-        org_config.get('object_api_name', config_manager.get_default('object_api_name', 'Document')),
-        org_config.get('source_name', config_manager.get_default('source_name', 'sfdc_ai_documents')),
-        org_config.get('max_concurrent_jobs', config_manager.get_default('max_concurrent_jobs', 5))
-    )
-    bulk_ingest.execute_bulk_ingest(csv_files)
+    Converts crawled JSON data to CSV format suitable for Data Cloud ingestion.
+    Can process a single file or an entire directory.
+    
+    Examples:
+        mindstream convert
+        mindstream convert --org myorg
+        mindstream convert --input-path ./data.json
+        mindstream convert --input-path ./json_dir --output-path ./csv_dir
+    
+    Options:
+        --org           Username or alias of the org to use
+        --input-path    Path to JSON file or directory to convert
+        --output-path   Custom path to store converted CSV files
+    
+    Default Paths:
+        Input:  ~/.mindstream/orgs/<username>/results/
+        Output: ~/.mindstream/orgs/<username>/csv_files/
+    """
+    try:
+        config = get_effective_config(org)
+        org_dir = config_manager.get_org_path(config.username)
+        
+        # Determine paths
+        input_folder = Path(input_path) if input_path else org_dir / "results"
+        output_folder = Path(output_path) if output_path else org_dir / "csv_files"
+        
+        converter = JSONToCSVConverter(input_folder, output_folder)
+        converter.convert()
+        click.echo(f"Conversion completed. CSV files stored in: {output_folder}")
+        
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
+@cli.command()
+@click.option('--org', help='Username or alias of the org to use')
+@click.option('--input-path', type=click.Path(exists=True), help='Path to CSV file or directory')
+@click.option('--object-api-name', help='Override object API name')
+@click.option('--source-name', help='Override source name')
+@click.option('--max-concurrent-jobs', type=int, help='Override max concurrent jobs')
+def upload(org, input_path, object_api_name, source_name, max_concurrent_jobs):
+    """Upload CSV data to Data Cloud
+    
+    Bulk uploads CSV files to Salesforce Data Cloud using configured
+    or overridden settings. Can process a single file or directory.
+    
+    Examples:
+        mindstream upload
+        mindstream upload --org myorg
+        mindstream upload --input-path ./data.csv
+        mindstream upload --object-api-name "CustomDoc"
+        mindstream upload --source-name "custom_source"
+    
+    Options:
+        --org                  Username or alias of the org to use
+        --input-path          Path to CSV file or directory to upload
+        --object-api-name     Override configured object API name
+        --source-name         Override configured source name
+        --max-concurrent-jobs Override configured max concurrent jobs
+    
+    Default Path:
+        Input: ~/.mindstream/orgs/<username>/csv_files/
+    """
+    try:
+        config = get_effective_config(org)
+        org_dir = config_manager.get_org_path(config.username)
+        
+        # Determine input path
+        input_folder = Path(input_path) if input_path else org_dir / "csv_files"
+        
+        # Create bulk ingest with potential overrides
+        bulk_ingest = DataCloudBulkIngest(
+            config.access_token,
+            config.instance_url,
+            object_api_name or config.ingestor.object_api_name,
+            source_name or config.ingestor.source_name,
+            max_concurrent_jobs or config.ingestor.max_concurrent_jobs
+        )
+        
+        # Get CSV files
+        if input_folder.is_file():
+            csv_files = [input_folder]
+        else:
+            csv_files = list(input_folder.glob("*.csv"))
+        
+        if not csv_files:
+            raise click.UsageError(f"No CSV files found in {input_folder}")
+        
+        bulk_ingest.execute_bulk_ingest(csv_files)
+        click.echo(f"Upload completed for {len(csv_files)} files")
+        
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
+@cli.command()
+@click.option('--org', help='Username or alias of the org to use')
+@click.option('--page-limit', type=int, help='Override page limit')
+@click.option('--crawl-url', help='Override crawl URL')
+@click.option('--api-key', help='Override API key')
+@click.option('--whitelist', help='Override whitelist')
+@click.option('--param', '-p', multiple=True, help='Additional crawler parameters')
+@click.option('--object-api-name', help='Override object API name')
+@click.option('--source-name', help='Override source name')
+@click.option('--max-concurrent-jobs', type=int, help='Override max concurrent jobs')
+async def pipeline(org, page_limit, crawl_url, api_key, whitelist, param, 
+                  object_api_name, source_name, max_concurrent_jobs):
+    """Run the complete pipeline with optional overrides
+    
+    Executes all steps: crawl, convert, and upload.
+    Uses stored configuration with optional overrides.
+    
+    Examples:
+        mindstream pipeline
+        mindstream pipeline --org myorg
+        mindstream pipeline --crawl-url "https://example.com" --source-name "custom"
+        mindstream pipeline --page-limit 100 --max-concurrent-jobs 3
+    
+    Crawler Options:
+        --page-limit    Override configured page limit
+        --crawl-url     Override configured crawl URL
+        --api-key       Override configured API key
+        --whitelist     Override configured whitelist
+        --param, -p     Additional crawler parameters
+    
+    Ingestor Options:
+        --object-api-name     Override configured object API name
+        --source-name         Override configured source name
+        --max-concurrent-jobs Override configured max concurrent jobs
+    
+    General Options:
+        --org    Username or alias of the org to use
+    """
+    try:
+        # Execute each step with the provided options
+        await crawl(org, None, page_limit, crawl_url, api_key, whitelist, param)
+        convert(org, None, None)
+        upload(org, None, object_api_name, source_name, max_concurrent_jobs)
+        
+    except Exception as e:
+        click.echo(f"Pipeline failed: {str(e)}", err=True)
+
+@cli.command()
+@click.option('--org', help='Username or alias of the org to open')
+def open(org):
+    """Open the org's directory in file explorer
+    
+    Opens the directory containing all files for the specified org
+    or the current org if none specified.
+    
+    Examples:
+        mindstream open
+        mindstream open --org myorg
+    
+    Options:
+        --org    Username or alias of the org to open
+    
+    Directory Structure:
+        ~/.mindstream/orgs/<username>/
+        ├── config.json     # Org configuration
+        ├── results/        # Crawler results
+        ├── csv_files/      # Converted CSV files
+        └── logs/          # Operation logs
+    """
+    # ... implementation ...
 
 def main():
-    current_org = config_manager.get_global_config().get('current_org')  # Using global config_manager
+    global_config = config_manager.get_global_config()
+    current_org = global_config.current_org
     
     if not current_org:
         click.echo("No org selected. Please select an org using 'mindstream org use <username>'")
@@ -300,10 +744,10 @@ def main():
     org_config = config_manager.get_org_config(current_org)
     
     # Get configuration values with defaults
-    api_key = org_config.get('api_key', config_manager.get_default('api_key'))
-    crawl_url = org_config.get('crawl_url', config_manager.get_default('crawl_url'))
-    whitelist = org_config.get('whitelist', config_manager.get_default('whitelist', []))
-    page_limit = org_config.get('page_limit', config_manager.get_default('page_limit', 50))
+    api_key = org_config.get('api_key', global_config.crawler.api_key)
+    crawl_url = org_config.get('crawl_url', global_config.crawler.crawl_url)
+    whitelist = org_config.get('whitelist', global_config.crawler.whitelist)
+    page_limit = org_config.get('page_limit', global_config.crawler.page_limit)
     
     # Update paths to use org-specific directories
     output_folder = org_dir / "results"
@@ -318,18 +762,107 @@ def main():
     converter.convert()
 
     # Bulk Ingest to Data Cloud
-    csv_files = [
-        f for f in csv_output_folder.glob("*.csv")
-    ]
+    csv_files = [f for f in csv_output_folder.glob("*.csv")]
     
     bulk_ingest = DataCloudBulkIngest(
         org_config['access_token'],
         org_config['instance_url'],
-        org_config.get('object_api_name', config_manager.get_default('object_api_name', 'Document')),
-        org_config.get('source_name', config_manager.get_default('source_name', 'sfdc_ai_documents')),
-        org_config.get('max_concurrent_jobs', config_manager.get_default('max_concurrent_jobs', 5))
+        org_config.get('object_api_name', global_config.ingestor.object_api_name),
+        org_config.get('source_name', global_config.ingestor.source_name),
+        org_config.get('max_concurrent_jobs', global_config.ingestor.max_concurrent_jobs)
     )
     bulk_ingest.execute_bulk_ingest(csv_files)
+
+def resolve_username(identifier: str) -> str:
+    """Resolve username from identifier (username or alias)"""
+    if not identifier:
+        # Try to get current org from global config
+        global_config = config_manager.get_global_config()
+        if not global_config.current_org:
+            raise click.UsageError("No org selected. Please specify --username or use 'mindstream org use <username>'")
+        return global_config.current_org
+        
+    # Try to find username if an alias was provided
+    username = SalesforceCLI.get_username_from_alias(identifier)
+    if username:
+        if not (config_manager.orgs_dir / config_manager._sanitize_username(username)).exists():
+            raise click.UsageError(f"Org with alias '{identifier}' (username: {username}) not found in local config")
+        return username
+        
+    # If no alias found, treat the identifier as a username
+    if not (config_manager.orgs_dir / config_manager._sanitize_username(identifier)).exists():
+        raise click.UsageError(f"Org {identifier} not found")
+    
+    return identifier
+
+def get_effective_config(org_identifier: Optional[str] = None):
+    """Get effective configuration for an org"""
+    if org_identifier:
+        target_username = resolve_username(org_identifier)
+    else:
+        global_config = config_manager.get_global_config()
+        if not global_config.current_org:
+            raise click.UsageError("No org selected. Please specify --org or use 'mindstream org use'")
+        target_username = global_config.current_org
+    
+    return config_manager.get_org_config(target_username)
+
+@cli.command()
+def help():
+    """Show detailed help information"""
+    ctx = click.get_current_context()
+    click.echo(ctx.parent.get_help())
+    click.echo("\nDetailed command structure:")
+    click.echo("""
+Commands:
+  org
+    ├── add                 Add and authenticate a new Salesforce org
+    ├── use                 Set the current working org
+    ├── list               List all connected orgs
+    ├── login              Re-authenticate an existing org
+    └── regenerate-certs   Regenerate certificates for org(s)
+    
+  config
+    ├── show               Show current configuration
+    ├── crawler
+    │   └── set           Configure crawler settings
+    └── ingestor
+        └── set           Configure ingestor settings
+    
+  pipeline                 Run the complete pipeline (crawl, convert, ingest)
+
+Common Configuration Options:
+  Crawler:
+    --page-limit          Number of pages to crawl
+    --crawl-url          URL to crawl
+    --api-key            API key for crawler service
+    --whitelist          Comma-separated list of allowed domains
+    -p, --param          Additional parameters (key=value format)
+    
+  Ingestor:
+    --object-api-name    Salesforce object API name
+    --source-name        Source name for ingested data
+    --max-concurrent-jobs Maximum concurrent ingestion jobs
+    
+  General:
+    --org               Target specific org (username or alias)
+
+Examples:
+  1. Set up a new org:
+     mindstream org add --alias myorg
+     mindstream org use myorg
+  
+  2. Configure crawler:
+     mindstream config crawler set --crawl-url "https://example.com" --api-key "key"
+     mindstream config crawler set --page-limit 100 --org myorg
+  
+  3. Configure ingestor:
+     mindstream config ingestor set --object-api-name "CustomDoc"
+     mindstream config ingestor set --source-name "custom_source" --org myorg
+  
+  4. Run pipeline:
+     mindstream pipeline
+""")
 
 if __name__ == "__main__":
     cli()
