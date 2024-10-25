@@ -28,6 +28,7 @@ build/
 results/
 csv_files/
 data.json
+certificates/
 
 # Ignore logs
 *.log
