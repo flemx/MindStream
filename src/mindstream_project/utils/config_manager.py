@@ -44,7 +44,7 @@ class ConfigManager:
             'defaults': {
                 'page_limit': 50,
                 'object_api_name': 'Document',
-                'source_name': 'sfdc_ai_documents',
+                'source_name': 'mindstream_data',
                 'max_concurrent_jobs': 5,
                 'crawl_url': "",  # Empty default
                 'api_key': "",    # Empty default
