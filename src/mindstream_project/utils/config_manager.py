@@ -10,7 +10,6 @@ class ConfigManager:
         self.base_dir = Path.home() / '.mindstream'
         self.orgs_dir = self.base_dir / 'orgs'
         self.global_config_path = self.base_dir / 'global_config.json'
-        self.current_org: Optional[str] = None
         
         try:
             self._ensure_base_structure()
@@ -24,11 +23,9 @@ class ConfigManager:
 
     def _ensure_base_structure(self):
         """Ensure the base directory structure exists"""
-        # Create base directory if it doesn't exist
         self.base_dir.mkdir(mode=0o700, exist_ok=True)  # Secure permissions
         self.orgs_dir.mkdir(mode=0o700, exist_ok=True)
         
-        # Create global config if it doesn't exist
         if not self.global_config_path.exists():
             self._save_json(self.global_config_path, {
                 'current_org': None,
@@ -67,11 +64,11 @@ class ConfigManager:
                         current_config['defaults'][key] = value
             self._save_json(self.global_config_path, current_config)
 
-    def init_org(self, username: str) -> Path:
+    def init_org(self, username: str, alias: Optional[str] = None) -> Path:
         """Initialize directory structure for a new org"""
         if not username:
             raise ValueError("Username cannot be empty")
-            
+                
         org_dir = self.orgs_dir / self._sanitize_username(username)
         
         try:
@@ -82,21 +79,23 @@ class ConfigManager:
             (org_dir / 'certificates').mkdir(mode=0o700, exist_ok=True)
             (org_dir / 'csv_files').mkdir(mode=0o700, exist_ok=True)
             (org_dir / 'results').mkdir(mode=0o700, exist_ok=True)
+            (org_dir / 'mdapi').mkdir(mode=0o700, exist_ok=True)
             
             # Initialize org config if it doesn't exist
             config_path = org_dir / 'config.json'
             if not config_path.exists():
                 self._save_json(config_path, {
                     'username': username,
+                    'alias': alias,
                     'access_token': None,
                     'instance_url': None,
                     'consumer_key': None,
                     'created_at': datetime.now().isoformat()
                 })
                 os.chmod(config_path, 0o600)  # Secure permissions for config file
-            
+                
             return org_dir
-            
+                
         except Exception as e:
             logging.error(f"Failed to initialize org directory for {username}: {str(e)}")
             raise
@@ -117,6 +116,25 @@ class ConfigManager:
         """Get configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
         return self._load_json(config_path) if config_path.exists() else {}
+
+    def set_default_org(self, username: str):
+        """Set the default org in the global config"""
+        if not username:
+            raise ValueError("Username cannot be empty")
+        global_config = self.get_global_config()
+        global_config['current_org'] = username
+        self._save_json(self.global_config_path, global_config)
+
+    def list_orgs(self) -> Dict[str, Dict]:
+        """List all orgs and indicate the default one"""
+        orgs = {}
+        for org_dir in self.orgs_dir.iterdir():
+            if org_dir.is_dir():
+                config_path = org_dir / 'config.json'
+                if config_path.exists():
+                    config = self._load_json(config_path)
+                    orgs[config['username']] = config
+        return orgs
 
     @staticmethod
     def _save_json(path: Path, data: Dict):

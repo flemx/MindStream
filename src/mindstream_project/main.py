@@ -1,6 +1,7 @@
 import os
 import click
 import asyncio
+import subprocess
 from mindstream_project.converter.json_to_csv_converter import JSONToCSVConverter
 from mindstream_project.ingestor.data_cloud_bulk_ingest import DataCloudBulkIngest
 from mindstream_project.crawler.data_crawler import DataCrawler
@@ -21,28 +22,126 @@ def cli():
 
 @cli.group()
 def org():
-    """Manage Salesforce orgs"""
+    """Manage Salesforce orgs and authentication"""
     pass
 
 @org.command()
-@click.argument('username')
-def add(username):
-    """Add a new Salesforce org"""
-    org_dir = config_manager.init_org(username)  # Using global config_manager
+@click.option('--alias', default=None, help='Alias for the Salesforce org')
+@click.option('--default', is_flag=True, help='Set this org as the default org')
+def add(alias, default):
+    """Add and authenticate a new Salesforce org"""
+    # Authenticate the org using Salesforce CLI first
+    try:
+        auth_command = ['sf', 'org', 'login', 'web']
+        if alias:
+            auth_command.extend(['--alias', alias])
+        click.echo("Opening browser to authenticate the org, please wait a while after you've logged in...")
+        subprocess.run(auth_command, check=True)
+        click.echo("Authentication successful.")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Error authenticating the org: {e}", err=True)
+        return
+
+    # Get username from the authenticated org
+    try:
+        result = subprocess.run(
+            ['sf', 'org', 'display', '--json'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        org_info = json.loads(result.stdout)
+        username = org_info['result']['username']
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+        click.echo(f"Error getting org information: {e}", err=True)
+        return
+
+    # Initialize org directory and configuration
+    org_dir = config_manager.init_org(username, alias)
     click.echo(f"Initialized org directory for {username}")
+
+    # Optionally set as default org
+    if default:
+        config_manager.set_default_org(username)
+        click.echo(f"Set {username} as the default org")
+
+    # Generate certificates and deploy metadata
+    generate_certificates(org_dir)
+    click.echo("Certificates generated and metadata deployed successfully.")
+
+    click.echo(f"Successfully added and authenticated org: {username}")
 
 @org.command()
 @click.argument('username')
 def use(username):
     """Set the current working org"""
-    config_manager = ConfigManager()
-    if not (config_manager.orgs_dir / username).exists():
+    if not (config_manager.orgs_dir / config_manager._sanitize_username(username)).exists():
         click.echo(f"Org {username} not found. Please add it first using 'mindstream org add {username}'")
         return
     
     # Store current org in global config
-    config_manager.set_global_config({'current_org': username})
+    config_manager.set_default_org(username)
     click.echo(f"Now using org: {username}")
+
+@org.command()
+def list():
+    """List all connected orgs and the default one"""
+    orgs = config_manager.list_orgs()
+    default_org = config_manager.get_global_config().get('current_org')
+    for org_username, config in orgs.items():
+        alias = config.get('alias', '')
+        default_marker = '(Default)' if org_username == default_org else ''
+        click.echo(f"Username: {org_username}, Alias: {alias} {default_marker}")
+
+@org.command()
+@click.option('--username', help='Username of the org to regenerate certificates for')
+@click.option('--all-orgs', is_flag=True, help='Regenerate certificates for all orgs')
+def regenerate_certs(username, all_orgs):
+    """Regenerate certificates for specified org(s)"""
+    if all_orgs:
+        orgs = config_manager.list_orgs()
+        for org_username in orgs:
+            org_dir = config_manager.get_org_path(org_username)
+            generate_certificates(org_dir)
+            click.echo(f"Regenerated certificates for {org_username}")
+        return
+
+    if username:
+        org_dir = config_manager.get_org_path(username)
+        if not org_dir.exists():
+            click.echo(f"Org {username} not found. Please add it first using 'mindstream org add {username}'")
+            return
+        generate_certificates(org_dir)
+        click.echo(f"Regenerated certificates for {username}")
+    else:
+        current_org = config_manager.get_global_config().get('current_org')
+        if not current_org:
+            click.echo("No org selected. Please specify --username or use 'mindstream org use <username>'")
+            return
+        org_dir = config_manager.get_org_path(current_org)
+        generate_certificates(org_dir)
+        click.echo(f"Regenerated certificates for {current_org}")
+
+@org.command()
+@click.argument('username')
+def login(username):
+    """Re-authenticate an existing org"""
+    if not (config_manager.orgs_dir / config_manager._sanitize_username(username)).exists():
+        click.echo(f"Org {username} not found. Please add it first using 'mindstream org add {username}'")
+        return
+    
+    try:
+        auth_command = ['sf', 'org', 'login', 'web', '--set-default-username']
+        click.echo("Opening browser to authenticate the org...")
+        subprocess.run(auth_command, check=True)
+        click.echo("Authentication successful.")
+        
+        # Generate new access token using JWT
+        asyncio.run(generate_access_token())
+        click.echo("JWT authentication successful")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Error authenticating the org: {e}", err=True)
+        return
 
 @cli.group()
 def config():
@@ -162,22 +261,6 @@ def pipeline():
         org_config.get('max_concurrent_jobs', config_manager.get_default('max_concurrent_jobs', 5))
     )
     bulk_ingest.execute_bulk_ingest(csv_files)
-
-@cli.command()
-@click.option('--generate-cert', is_flag=True, help="Generate new certificates")
-@click.option('--use-cli', is_flag=True, help="Use Salesforce CLI for authentication")
-@click.option('--alias', help="Salesforce CLI org alias to use")
-def auth(generate_cert, use_cli, alias):
-    """Authentication management commands"""
-    try:
-        if generate_cert:
-            generate_certificates()
-            click.echo("Certificates generated successfully")
-        else:
-            token = asyncio.run(generate_access_token())
-            click.echo(f"Successfully generated token using JWT: {token}")
-    except Exception as e:
-        click.echo(f"Error in auth command: {e}", err=True)
 
 def main():
     current_org = config_manager.get_global_config().get('current_org')  # Using global config_manager

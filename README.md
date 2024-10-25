@@ -50,67 +50,75 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
 
    > **Note:** The `-e` flag installs the package in "editable" or "development" mode, allowing you to modify the source code without reinstalling.
 
-4. Update the configuration values in `config.py` with your credentials and settings.
 
-5. Place your Salesforce private key in `salesforce.key` file.
 
 ### Running the Project
 
-The project provides several commands:
+The project provides several commands for managing orgs and running the pipeline:
 
 1. Run the complete pipeline:
    ```bash
    mindstream pipeline
    ```
 
-2. Generate authentication token:
+2. Manage Salesforce orgs:
    ```bash
-   mindstream auth
-   ```
+   # Add and authenticate a new org
+   mindstream org add user@salesforce.com [--alias myorg] [--default]
 
-The pipeline command will crawl the data, convert it to CSV, and ingest it into Salesforce Data Cloud.
+   # Set current working org
+   mindstream org use user@salesforce.com
+
+   # List all connected orgs
+   mindstream org list
+
+   # Re-authenticate an existing org
+   mindstream org login user@salesforce.com
+
+   # Regenerate certificates
+   mindstream org regenerate-certs [--username user@salesforce.com] [--all-orgs]
+   ```
 
 ## Authentication Setup
 
-There are multiple ways to authenticate with Salesforce Data Cloud:
+Authentication in MindStream is managed through the `org` commands. When you add a new org, the system automatically:
+1. Creates the necessary directory structure
+2. Authenticates with Salesforce using web login
+3. Generates SSL certificates for JWT authentication
+4. Deploys required metadata
 
-### 1. Using Salesforce CLI (Recommended for Development)
-The simplest way to authenticate is using your existing Salesforce CLI authentication:
+### Adding a New Org
 
 ```bash
-# Using default org
-mindstream auth --use-cli
+# Add org and set as default
+mindstream org add user@salesforce.com --default
 
-# Using specific org alias
-mindstream auth --use-cli --alias mindstream
+# Add org with an alias
+mindstream org add user@salesforce.com --alias production
 ```
 
-### 2. Using JWT Authentication
-For automated processes or CI/CD pipelines, you can use JWT-based authentication.
+### Re-authenticating an Org
 
-First, generate SSL certificates:
+If your authentication expires or you need to re-authenticate:
 ```bash
-mindstream auth --generate-cert
+mindstream org login user@salesforce.com
 ```
 
-This will:
-- Create a `certificates` directory in the project root
-- Generate `salesforce.key` and `salesforce.crt`
-- Automatically update the connected app XML with the certificate
-- Add the certificates directory to .gitignore
+### Managing Certificates
 
-Then generate an access token:
+To regenerate certificates for JWT authentication:
 ```bash
-mindstream auth
+# Regenerate for specific org
+mindstream org regenerate-certs --username user@salesforce.com
+
+# Regenerate for all orgs
+mindstream org regenerate-certs --all-orgs
+
+# Regenerate for current org
+mindstream org regenerate-certs
 ```
 
-### 3. Generate Access Token
-To generate a new access token using the default JWT method:
-```bash
-mindstream auth
-```
-
-### 4. Configuration Storage
+## Configuration Storage
 
 The project uses a `~/.mindstream` directory to store temporary data and configuration files.
 
