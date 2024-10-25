@@ -3,6 +3,7 @@
     <contactEmail>damien@fleminks.com</contactEmail>
     <label>dc injest</label>
     <oauthConfig>
+        <certificate></certificate>
         <callbackUrl>https://login.salesforce.com/services/oauth2/success</callbackUrl>
         <isAdminApproved>true</isAdminApproved>
         <isClientCredentialEnabled>false</isClientCredentialEnabled>
