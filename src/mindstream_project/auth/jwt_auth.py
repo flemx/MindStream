@@ -1,3 +1,4 @@
+import json
 import jwt
 from pathlib import Path
 import httpx
@@ -5,6 +6,8 @@ import sys
 import subprocess  # Add this import
 from dataclasses import dataclass
 from ..config import SF_USERNAME, SF_CONSUMER_KEY
+from datetime import datetime, timedelta
+from ..utils.config_manager import ConfigManager
 
 CERT_DIR = Path('./certificates')
 KEY_PATH = CERT_DIR / 'salesforce.key'
@@ -15,6 +18,7 @@ XML_PATH = Path('./salesforce_metadata/mindstream/force-app/main/default/connect
 class Config:
     username: str
     consumer_key: str
+
 
 def generate_certificates():
     """Generate SSL certificates and update connected app XML."""
@@ -72,17 +76,19 @@ async def generate_access_token():
         print(f"Error: private key not found at {KEY_PATH}")
         sys.exit(1)
 
+    # Calculate expiration time (2 hours from now)
+    exp = datetime.utcnow() + timedelta(hours=2)
+
     # Generate JWT and sign it with Private Key
     token = jwt.encode(
-        payload={},
-        key=private_key,
-        algorithm='RS256',
-        headers={
-            'exp': '2h',  # expires in 2 hours
+        payload={
+            'exp': int(exp.timestamp()),  # Expiration time as Unix timestamp
             'sub': config.username,
             'iss': config.consumer_key,
             'aud': 'https://login.salesforce.com'
-        }
+        },
+        key=private_key,
+        algorithm='RS256'
     )
 
     print(f"Generated JWT token: {token}")
@@ -127,6 +133,12 @@ async def generate_access_token():
         if 'error' in auth_dc:
             raise Exception(auth_dc.get('error_description', 'Unknown error'))
 
+        # Store the new configuration
+        config_manager.set_org_config(config.username, {
+            'access_token': auth_dc['access_token'],
+            'instance_url': auth_dc['instance_url']
+        })
+        
         return auth_dc
 
 async def main():

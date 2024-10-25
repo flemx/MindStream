@@ -23,7 +23,18 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
    cd mindstream_project
    ```
 
-2. Install the package locally:
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   
+   # On Windows
+   .\venv\Scripts\activate
+   
+   # On macOS/Linux
+   source venv/bin/activate
+   ```
+
+3. Install the package locally:
    
    For standard installation:
    ```bash
@@ -39,9 +50,9 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
 
    > **Note:** The `-e` flag installs the package in "editable" or "development" mode, allowing you to modify the source code without reinstalling.
 
-3. Update the configuration values in `config.py` with your credentials and settings.
+4. Update the configuration values in `config.py` with your credentials and settings.
 
-4. Place your Salesforce private key in `salesforce.key` file.
+5. Place your Salesforce private key in `salesforce.key` file.
 
 ### Running the Project
 
@@ -61,9 +72,23 @@ The pipeline command will crawl the data, convert it to CSV, and ingest it into 
 
 ## Authentication Setup
 
-### 1. Generate SSL Certificates
-Run the following command to generate certificates and update the connected app:
+There are multiple ways to authenticate with Salesforce Data Cloud:
 
+### 1. Using Salesforce CLI (Recommended for Development)
+The simplest way to authenticate is using your existing Salesforce CLI authentication:
+
+```bash
+# Using default org
+mindstream auth --use-cli
+
+# Using specific org alias
+mindstream auth --use-cli --alias mindstream
+```
+
+### 2. Using JWT Authentication
+For automated processes or CI/CD pipelines, you can use JWT-based authentication.
+
+First, generate SSL certificates:
 ```bash
 mindstream auth --generate-cert
 ```
@@ -74,8 +99,31 @@ This will:
 - Automatically update the connected app XML with the certificate
 - Add the certificates directory to .gitignore
 
-### 2. Generate Access Token
-To generate a new access token:
+Then generate an access token:
 ```bash
 mindstream auth
 ```
+
+### 3. Generate Access Token
+To generate a new access token using the default JWT method:
+```bash
+mindstream auth
+```
+
+### 4. Configuration Storage
+
+The project uses a `~/.mindstream` directory to store temporary data and configuration files.
+
+```
+mindstream_project/
+├── .mindstream/                      # Main temporary directory
+│   ├── orgs/                         # Directory for org-specific data
+│   │   ├── user1@salesforce.com/     # Org-specific directory
+│   │   │   ├── certificates/         # Org certificates
+│   │   │   ├── csv_files/           # Converted CSV files
+│   │   │   ├── results/             # Crawled data results
+│   │   │   └── config.json          # Org-specific configuration
+│   │   └── user2@salesforce.com/
+│   └── global_config.json           # Global configuration
+```
+   
