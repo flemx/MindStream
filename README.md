@@ -8,6 +8,9 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
 - Crawl data from a specified source using `DataCrawler`
 - Convert crawled JSON data into CSV format using `JSONToCSVConverter`
 - Ingest the CSV data into Salesforce Data Cloud using `DataCloudBulkIngest`
+- Support for multiple org configurations and management
+- Flexible pipeline execution (full pipeline or individual steps)
+- Configurable crawler and ingestor settings
 
 ## Setup Instructions
 
@@ -50,33 +53,91 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
 
    > **Note:** The `-e` flag installs the package in "editable" or "development" mode, allowing you to modify the source code without reinstalling.
 
-
-
 ### Running the Project
 
-The project provides several commands for managing orgs and running the pipeline:
+The project provides several commands for managing orgs, configuration, and running the pipeline:
 
-1. Run the complete pipeline:
+#### Pipeline Commands
+
+1. Run individual pipeline steps:
    ```bash
-   mindstream pipeline
+   # Execute crawler with optional overrides
+   mindstream crawl [--org myorg] [--output-path ./custom/path]
+                   [--page-limit 100] [--crawl-url URL] [--api-key KEY]
+                   [--whitelist "domain1.com,domain2.com"]
+                   [-p respect_robots=true] [-p custom_param=value]
+
+   # Convert JSON to CSV
+   mindstream convert [--org myorg] 
+                     [--input-path ./data.json]
+                     [--output-path ./csv_output]
+
+   # Upload CSV to Data Cloud
+   mindstream upload [--org myorg]
+                    [--input-path ./data.csv]
+                    [--object-api-name "CustomDoc"]
+                    [--source-name "custom_source"]
+                    [--max-concurrent-jobs 5]
    ```
 
-2. Manage Salesforce orgs:
+2. Run the complete pipeline:
    ```bash
-   # Add and authenticate a new org
-   mindstream org add user@salesforce.com [--alias myorg] [--default]
+   # Run with stored configuration
+   mindstream pipeline
 
-   # Set current working org
-   mindstream org use user@salesforce.com
+   # Run with overrides
+   mindstream pipeline --org myorg \
+                      --page-limit 100 \
+                      --crawl-url "https://example.com" \
+                      --api-key "your-key" \
+                      --object-api-name "CustomDoc" \
+                      --source-name "custom_source"
+   ```
 
-   # List all connected orgs
-   mindstream org list
+#### Configuration Management
 
-   # Re-authenticate an existing org
-   mindstream org login user@salesforce.com
+1. View configuration:
+   ```bash
+   # Show all configuration
+   mindstream config show
 
-   # Regenerate certificates
-   mindstream org regenerate-certs [--username user@salesforce.com] [--all-orgs]
+   # Show specific components
+   mindstream config show --crawler
+   mindstream config show --ingestor
+
+   # Show org-specific config
+   mindstream config show --org myorg
+   ```
+
+2. Configure crawler settings:
+   ```bash
+   # Set global crawler config
+   mindstream config crawler set --page-limit 100 \
+                               --crawl-url "https://example.com" \
+                               --api-key "your-key" \
+                               --whitelist "domain1.com,domain2.com"
+
+   # Set org-specific crawler config
+   mindstream config crawler set --org myorg \
+                               --page-limit 100 \
+                               --crawl-url "https://example.com"
+
+   # Add custom parameters
+   mindstream config crawler set -p respect_robots=true \
+                               -p metadata=true \
+                               -p custom_param=value
+   ```
+
+3. Configure ingestor settings:
+   ```bash
+   # Set global ingestor config
+   mindstream config ingestor set --object-api-name "CustomDoc" \
+                                 --source-name "custom_source" \
+                                 --max-concurrent-jobs 5
+
+   # Set org-specific ingestor config
+   mindstream config ingestor set --org myorg \
+                                 --source-name "org_specific_source"
    ```
 
 ## Authentication Setup
@@ -87,141 +148,98 @@ Authentication in MindStream is managed through the `org` commands. When you add
 3. Generates SSL certificates for JWT authentication
 4. Deploys required metadata
 
-### Adding a New Org
+### Managing Orgs
 
+1. Add and authenticate orgs:
+   ```bash
+   # Add org and set as default
+   mindstream org add --default
+
+   # Add org with an alias
+   mindstream org add --alias myorg
+
+   # Add org with alias and set as default
+   mindstream org add --alias myorg --default
+   ```
+
+2. Manage existing orgs:
+   ```bash
+   # Set current working org
+   mindstream org use myorg
+
+   # List all connected orgs
+   mindstream org list
+
+   # Re-authenticate an existing org
+   mindstream org login user@example.com
+
+   # Regenerate certificates
+   mindstream org regenerate-certs [--username user@example.com] [--all-orgs]
+   ```
+
+3. Access org files:
+   ```bash
+   # Open current org directory
+   mindstream open
+
+   # Open specific org directory
+   mindstream open --org myorg
+   ```
+
+### Getting Help
+
+#### Show general help
 ```bash
-# Add org and set as default
-mindstream org add user@salesforce.com --default
-
-# Add org with an alias
-mindstream org add user@salesforce.com --alias production
+mindstream --help
+mindstream help
 ```
 
-### Re-authenticating an Org
-
-If your authentication expires or you need to re-authenticate:
+#### Show command-specific help
 ```bash
-mindstream org login user@salesforce.com
-```
-
-### Managing Certificates
-
-To regenerate certificates for JWT authentication:
-```bash
-# Regenerate for specific org
-mindstream org regenerate-certs --username user@salesforce.com
-
-# Regenerate for all orgs
-mindstream org regenerate-certs --all-orgs
-
-# Regenerate for current org
-mindstream org regenerate-certs
+mindstream crawl --help
+mindstream convert --help
+mindstream upload --help
+mindstream pipeline --help
+mindstream config --help
+mindstream org --help
 ```
 
 ## Configuration Storage
 
-The project uses a `~/.mindstream` directory to store temporary data and configuration files.
+The project uses a `~/.mindstream` directory to store temporary data and configuration files:
 
 ```
-mindstream_project/
-├── .mindstream/                      # Main temporary directory
-│   ├── orgs/                         # Directory for org-specific data
-│   │   ├── user1@salesforce.com/     # Org-specific directory
-│   │   │   ├── certificates/         # Org certificates
-│   │   │   ├── csv_files/           # Converted CSV files
-│   │   │   ├── results/             # Crawled data results
-│   │   │   └── config.json          # Org-specific configuration
-│   │   └── user2@salesforce.com/
-│   └── global_config.json           # Global configuration
+~/.mindstream/
+├── orgs/ # Org-specific data
+│ ├── user@example.com/
+│ │ ├── certificates/ # JWT certificates
+│ │ ├── config.json # Org configuration
+│ │ ├── results/ # Crawler results
+│ │ └── csv_files/ # Converted CSV files
+│ └── another@example.com/
+└── global_config.json # Global configuration
 ```
 
-### Configuration Management
 
-MindStream provides a flexible configuration system that can be managed through CLI commands. You can set both global defaults and org-specific configurations.
-
-#### Setting Global Defaults
-
-Use the `mindstream config set` command to configure global defaults:
-
-```bash
-# Set individual configuration values
-mindstream config set --page-limit 100 # Maximum number of pages to crawl
-mindstream config set --object-api-name "Document" # Ingestion object API name
-mindstream config set --source-name "mindstream_data" # Source name for Data Cloud ingestion
-mindstream config set --max-concurrent-jobs 5 # Maximum concurrent ingestion jobs
-mindstream config set --crawl-url "<The website you want to crawl>" # URL to start crawling from
-mindstream config set --api-key "your-api-key" # API key for spider cloud crawler authentication
-
-# Set whitelist patterns (comma-separated)
-mindstream config set --whitelist "/docs/*,/api/*" # Only crawl docs and API paths
-```
-
-The whitelist patterns determine which URLs should be included during the crawling process. These patterns support both glob-style (`*`) and regex patterns, and are matched against the full URL path.
-
-
-
-#### Viewing Current Configuration
-
-To view your current global configuration:
-```bash
-mindstream config show
-```
-
-Example output:
-```json
-{
-  "current_org": "user@salesforce.com",
-  "version": "1.0",
-  "defaults": {
-    "page_limit": 100,
-    "object_api_name": "Document",
-    "source_name": "mindstream_data",
-    "max_concurrent_jobs": 5,
-    "crawl_url": "<The website you want to crawl>",
-    "api_key": "your-api-key",
-    "whitelist": []
-  }
-}
-```
-
-#### Managing Multiple Orgs
-
-1. Add a new org:
-```bash
-mindstream org add user@salesforce.com
-```
-
-2. Switch to an org:
-```bash
-mindstream org use user@salesforce.com
-```
-
-Each org maintains its own configuration and can override global defaults. The configuration is stored in:
-- `~/.mindstream/orgs/<username>/config.json`
-
-#### Configuration Hierarchy
+### Configuration Hierarchy
 
 The system follows this configuration hierarchy:
-1. Org-specific configuration (if set)
-2. Global defaults (if org-specific not set)
-3. Built-in defaults (if neither above is set)
+1. Command-line overrides (highest priority)
+2. Org-specific configuration
+3. Global defaults
+4. Built-in defaults (lowest priority)
 
-#### Default Values
+### Default Values
 
-Here are the default values used if not explicitly set:
-
-| Configuration      | Default Value        | Description                                    |
-|-------------------|---------------------|------------------------------------------------|
-| page_limit        | 50                 | Maximum number of pages to crawl               |
-| object_api_name   | "Document"         | Salesforce object API name                     |
-| source_name       | "sfdc_ai_documents"| Source name for Data Cloud ingestion          |
+| Configuration      | Default Value     | Description                                    |
+|------------------- |-------------------|------------------------------------------------|
+| page_limit         | 50                | Maximum number of pages to crawl               |
+| object_api_name    | "Document"        | Salesforce object API name                     |
+| source_name        | "mindstream_data" | Source name for Data Cloud ingestion           |
 | max_concurrent_jobs| 5                 | Maximum concurrent ingestion jobs              |
-| crawl_url         | ""                | URL to start crawling from                     |
-| api_key           | ""                | API key for authentication                     |
-| whitelist         | []                | List of patterns to include while crawling     |
-
-
-
+| crawl_url          | ""                | URL to start crawling from                     |
+| api_key            | ""                | API key for authentication                     |
+| whitelist          | []                | List of patterns to include while crawling     |
 
 ## Spider Cloud Integration
 
@@ -237,6 +255,6 @@ MindStream uses [Spider Cloud](https://spider.cloud/) for high-performance web c
 2. You'll receive $200 in free credits when you spend $100
 3. Copy your API key from the dashboard
 4. Add it to your configuration:
-```bash
-mindstream config set --api-key "your-spider-cloud-api-key"
-```
+   ```bash
+   mindstream config crawler set --api-key "your-spider-cloud-api-key"
+   ```
