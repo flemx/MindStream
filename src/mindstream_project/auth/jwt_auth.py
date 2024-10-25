@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from ..utils.config_manager import ConfigManager
 import shutil
 import re
+from mindstream_project.utils.salesforce_cli import SalesforceCLI
 
 config_manager = ConfigManager()
 
@@ -26,8 +27,7 @@ def generate_certificates(org_dir: Path):
     MDAPI_DIR = org_dir / 'mdapi'
     CONNECTED_APP_DIR = MDAPI_DIR / 'connectedApps'
     CONNECTED_APP_PATH = CONNECTED_APP_DIR / 'dc_injest.connectedApp'
-    PACKAGE_XML_PATH = MDAPI_DIR / 'package.xml'
-
+    
     # Create certificates directory if it doesn't exist
     CERT_DIR.mkdir(exist_ok=True)
 
@@ -91,18 +91,12 @@ def generate_certificates(org_dir: Path):
     # Deploy metadata to Salesforce org
     org_config = config_manager.get_org_config(org_dir.name.replace('_at_', '@').replace('_dot_', '.'))
     alias = org_config.get('alias') or org_config.get('username')
-    deploy_command = [
-        'sf', 'project', 'deploy', 'start',
-        '--metadata-dir', str(MDAPI_DIR),
-        '--target-org', alias,
-        '--wait', '10'
-    ]
+    
     print("Deploying metadata to Salesforce org...")
-    try:
-        subprocess.run(deploy_command, check=True)
+    if SalesforceCLI.deploy_metadata(str(MDAPI_DIR), alias):
         print("Metadata deployed successfully to org.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error deploying metadata to Salesforce org: {e}")
+    else:
+        print("Error deploying metadata to Salesforce org")
         sys.exit(1)
 
 async def generate_access_token(username: str = None):
@@ -121,6 +115,7 @@ async def generate_access_token(username: str = None):
     
     # Get required configuration
     consumer_key = org_config.get('consumer_key')
+    login_url = org_config.get('login_url', 'https://login.salesforce.com')  # Get login_url with fallback
     if not consumer_key:
         raise ValueError(f"No consumer key found for org: {username}")
 
@@ -139,13 +134,13 @@ async def generate_access_token(username: str = None):
     # Calculate expiration time (2 hours from now)
     exp = datetime.utcnow() + timedelta(hours=2)
 
-    # Generate JWT and sign it with Private Key
+    # Update JWT payload with dynamic login_url
     token = jwt.encode(
         payload={
             'exp': int(exp.timestamp()),
             'sub': config.username,
             'iss': config.consumer_key,
-            'aud': 'https://login.salesforce.com'
+            'aud': login_url  # Use dynamic login_url instead of hardcoded value
         },
         key=private_key,
         algorithm='RS256'
@@ -154,10 +149,10 @@ async def generate_access_token(username: str = None):
     print(f"Generated JWT token for {username}")
 
     async with httpx.AsyncClient() as client:
-        # Get Salesforce Auth Token
+        # Get Salesforce Auth Token using dynamic login_url
         try:
             response_sf = await client.post(
-                'https://login.salesforce.com/services/oauth2/token',
+                f'{login_url}/services/oauth2/token',  # Use dynamic login_url
                 headers={'content-type': 'application/x-www-form-urlencoded'},
                 data={
                     'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',

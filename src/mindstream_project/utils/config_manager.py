@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
+from mindstream_project.models.org_config import OrgDetails
+from mindstream_project.models.global_config import GlobalConfig, GlobalDefaults
 
 class ConfigManager:
     def __init__(self):
@@ -27,48 +29,33 @@ class ConfigManager:
         self.orgs_dir.mkdir(mode=0o700, exist_ok=True)
         
         if not self.global_config_path.exists():
-            self._save_json(self.global_config_path, {
-                'current_org': None,
-                'version': '1.0'
-            })
+            self._save_json(self.global_config_path, GlobalConfig(None, GlobalDefaults()).to_dict())
             os.chmod(self.global_config_path, 0o600)  # Secure permissions for config file
 
     def _ensure_default_global_config(self):
         """Ensure default global configuration exists"""
-        defaults = {
-            'current_org': None,
-            'version': '1.0',
-            'defaults': {
-                'page_limit': 50,
-                'object_api_name': 'Document',
-                'source_name': 'mindstream_data',
-                'max_concurrent_jobs': 5,
-                'crawl_url': "",  # Empty default
-                'api_key': "",    # Empty default
-                'whitelist': []   # Empty default list
-            }
-        }
+        defaults = GlobalConfig(None, GlobalDefaults())
         
         if not self.global_config_path.exists():
-            self._save_json(self.global_config_path, defaults)
+            self._save_json(self.global_config_path, defaults.to_dict())
             os.chmod(self.global_config_path, 0o600)
         else:
             # Update existing config with any missing defaults
-            current_config = self._load_json(self.global_config_path)
-            if 'defaults' not in current_config:
-                current_config['defaults'] = defaults['defaults']
+            current_config = GlobalConfig.from_dict(self._load_json(self.global_config_path))
+            if not current_config.defaults:
+                current_config.defaults = defaults.defaults
             else:
                 # Ensure new default values are added
-                for key, value in defaults['defaults'].items():
-                    if key not in current_config['defaults']:
-                        current_config['defaults'][key] = value
-            self._save_json(self.global_config_path, current_config)
+                for key, value in defaults.defaults.__dict__.items():
+                    if getattr(current_config.defaults, key) is None:
+                        setattr(current_config.defaults, key, value)
+            self._save_json(self.global_config_path, current_config.to_dict())
 
-    def init_org(self, username: str, alias: Optional[str] = None) -> Path:
+    def init_org(self, username: str, org_details: OrgDetails) -> Path:
         """Initialize directory structure for a new org"""
         if not username:
             raise ValueError("Username cannot be empty")
-                
+            
         org_dir = self.orgs_dir / self._sanitize_username(username)
         
         try:
@@ -81,21 +68,13 @@ class ConfigManager:
             (org_dir / 'results').mkdir(mode=0o700, exist_ok=True)
             (org_dir / 'mdapi').mkdir(mode=0o700, exist_ok=True)
             
-            # Initialize org config if it doesn't exist
+            # Initialize org config with org details
             config_path = org_dir / 'config.json'
-            if not config_path.exists():
-                self._save_json(config_path, {
-                    'username': username,
-                    'alias': alias,
-                    'access_token': None,
-                    'instance_url': None,
-                    'consumer_key': None,
-                    'created_at': datetime.now().isoformat()
-                })
-                os.chmod(config_path, 0o600)  # Secure permissions for config file
-                
+            self._save_json(config_path, org_details.to_dict())
+            os.chmod(config_path, 0o600)  # Secure permissions for config file
+            
             return org_dir
-                
+            
         except Exception as e:
             logging.error(f"Failed to initialize org directory for {username}: {str(e)}")
             raise
@@ -104,36 +83,35 @@ class ConfigManager:
         """Get the path for an org's directory"""
         return self.orgs_dir / self._sanitize_username(username)
 
-    def set_org_config(self, username: str, config: Dict):
+    def set_org_config(self, username: str, config: OrgDetails):
         """Update configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
-        existing_config = self._load_json(config_path) if config_path.exists() else {}
-        existing_config.update(config)
-        existing_config['updated_at'] = datetime.now().isoformat()
-        self._save_json(config_path, existing_config)
+        existing_config = OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='', org_id='')
+        existing_config.updated_at = datetime.now()
+        self._save_json(config_path, existing_config.to_dict())
 
-    def get_org_config(self, username: str) -> Dict:
+    def get_org_config(self, username: str) -> OrgDetails:
         """Get configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
-        return self._load_json(config_path) if config_path.exists() else {}
+        return OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='', org_id='')
 
     def set_default_org(self, username: str):
         """Set the default org in the global config"""
         if not username:
             raise ValueError("Username cannot be empty")
         global_config = self.get_global_config()
-        global_config['current_org'] = username
-        self._save_json(self.global_config_path, global_config)
+        global_config.current_org = username
+        self._save_json(self.global_config_path, global_config.to_dict())
 
-    def list_orgs(self) -> Dict[str, Dict]:
+    def list_orgs(self) -> Dict[str, OrgDetails]:
         """List all orgs and indicate the default one"""
         orgs = {}
         for org_dir in self.orgs_dir.iterdir():
             if org_dir.is_dir():
                 config_path = org_dir / 'config.json'
                 if config_path.exists():
-                    config = self._load_json(config_path)
-                    orgs[config['username']] = config
+                    config = OrgDetails.from_dict(self._load_json(config_path))
+                    orgs[config.username] = config
         return orgs
 
     @staticmethod
@@ -159,25 +137,27 @@ class ConfigManager:
         """Sanitize username for use in filesystem paths"""
         return username.replace('@', '_at_').replace('.', '_dot_')
 
-    def get_global_config(self) -> Dict:
+    def get_global_config(self) -> GlobalConfig:
         """Get global configuration"""
-        return self._load_json(self.global_config_path)
+        return GlobalConfig.from_dict(self._load_json(self.global_config_path))
 
-    def set_global_config(self, config: Dict):
+    def set_global_config(self, config: GlobalConfig):
         """Update global configuration"""
         current_config = self.get_global_config()
-        current_config.update(config)
-        self._save_json(self.global_config_path, current_config)
+        current_config.current_org = config.current_org
+        current_config.version = config.version
+        current_config.defaults = config.defaults
+        self._save_json(self.global_config_path, current_config.to_dict())
 
     def get_default(self, key: str, default=None):
         """Get a default value from global config"""
         config = self.get_global_config()
-        return config.get('defaults', {}).get(key, default)
+        return getattr(config.defaults, key, default)
 
     def set_default(self, key: str, value):
         """Set a default value in global config"""
         config = self.get_global_config()
-        if 'defaults' not in config:
-            config['defaults'] = {}
-        config['defaults'][key] = value
-        self._save_json(self.global_config_path, config)
+        if not hasattr(config.defaults, key):
+            raise ValueError(f"Invalid default key: {key}")
+        setattr(config.defaults, key, value)
+        self._save_json(self.global_config_path, config.to_dict())
