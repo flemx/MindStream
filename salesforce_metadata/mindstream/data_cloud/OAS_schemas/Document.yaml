@@ -1,0 +1,22 @@
+openapi: 3.0.3
+components:
+  schemas:
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        url:
+          type: number
+          format: url
+        title:
+          type: number
+        category:
+          type: number
+        other_metadata:
+          type: number
+        last_updated:
+          type: string
+          format: date-time
