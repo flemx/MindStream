@@ -53,13 +53,13 @@ def generate_certificates(org_dir: Path):
             print("Certificates generated successfully.")
         except subprocess.CalledProcessError as e:
             logger.error(f"Error generating certificates: {e}")
-            sys.exit(1)
+            raise
 
         # Copy MDAPI files to org directory
         source_mdapi_dir = Path('salesforce_metadata') / 'mindstream' / 'mdapi'
         if not source_mdapi_dir.exists():
             logger.error(f"Error: MDAPI source directory does not exist at: {source_mdapi_dir}")
-            sys.exit(1)
+            raise FileNotFoundError(f"MDAPI source directory not found: {source_mdapi_dir}")
         
         # Create parent directories if they don't exist
         MDAPI_DIR.parent.mkdir(parents=True, exist_ok=True)
@@ -74,10 +74,9 @@ def generate_certificates(org_dir: Path):
             logger.debug(f"MDAPI files copied from {source_mdapi_dir} to {MDAPI_DIR}")
         except Exception as e:
             logger.error(f"Error copying MDAPI files: {e}")
-            sys.exit(1)
+            raise
 
         logger.debug("Updating Connected App XML with certificate...")
-        logger.debug("Updating Connected App XML with new certificate content")
         # Update XML file with certificate
         try:
             cert_content = CERT_PATH.read_text().strip()
@@ -96,27 +95,35 @@ def generate_certificates(org_dir: Path):
             logger.debug("Connected App XML updated successfully")
         except Exception as e:
             logger.error(f"Error updating Connected App XML file: {e}")
-            sys.exit(1)
+            raise
 
-        # Deploy metadata to Salesforce org
-        org_username = org_dir.name.replace('_at_', '@').replace('_dot_', '.')
-        logger.debug(f"Getting org config for username: {org_username}")
-        org_config = config_manager.get_org_config(org_username)
-        logger.debug(f"Org config type: {type(org_config)}")
-        logger.debug(f"Org config content: {org_config.to_dict()}")
-        
-        alias = org_config.alias or org_config.username
-        logger.debug(f"Using alias/username for deployment: {alias}")
-        logger.debug(f"Deploying metadata to Salesforce org with alias: {alias}")
+        # Deploy the updated Connected App to Salesforce
+        try:
+            # Read the org config to get the actual username
+            config_path = org_dir / 'config.json'
+            if not config_path.exists():
+                raise FileNotFoundError(f"Org config file not found at: {config_path}")
+            
+            with open(config_path, 'r') as f:
+                org_config = json.load(f)
+                
+            username = org_config.get('username')
+            if not username:
+                raise ValueError("Username not found in org config")
+                
+            logger.debug(f"Deploying Connected App to Salesforce org: {username}")
+            
+            if SalesforceCLI.deploy_metadata(str(MDAPI_DIR), username):
+                logger.info("Connected App deployed successfully")
+                print("Connected App deployed successfully")
+            else:
+                raise Exception("Failed to deploy Connected App")
+        except Exception as e:
+            logger.error(f"Error deploying Connected App: {e}")
+            raise
 
-        logger.debug("Deploying metadata to Salesforce org...")
-        if SalesforceCLI.deploy_metadata(str(MDAPI_DIR), alias):
-            logger.debug("Metadata deployed successfully to org.")
-        else:
-            logger.error("Error deploying metadata to Salesforce org")
-            sys.exit(1)
     except Exception as e:
-        logger.error(f"Error in generate_certificates: {str(e)}", exc_info=True)
+        logger.error(f"Error in generate_certificates: {str(e)}")
         raise
 
 async def generate_access_token(username: str = None):

@@ -15,7 +15,7 @@ import json
 from mindstream_project.utils.salesforce_cli import SalesforceCLI
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from mindstream_project.models.global_config import CrawlerDefaults, IngestorDefaults
+from mindstream_project.models.global_config import CrawlerDefaults, IngestorDefaults, GlobalConfig
 from pathlib import Path
 from mindstream_project.utils.logging_config import get_logger, setup_logging
 import platform
@@ -57,33 +57,64 @@ def add(alias, default):
     try:
         logger.debug(f"Starting org add with alias: {alias}, default: {default}")
         
-        # Check if the org is already authenticated
+        # Check if the org is already authenticated in SF CLI
         if alias and SalesforceCLI.is_org_authenticated(alias):
-            click.echo(f"Org with alias '{alias}' is already authenticated.")
-            return
-
-        # Authenticate the org using Salesforce CLI
-        print("Authenticating org with Salesforce CLI, please wait after successful login...")
-        org_info = SalesforceCLI.authenticate_org(alias)
-        if org_info:
-            click.echo("Authentication successful.")
-            logger.debug(f"Org info received: {org_info}")
+            # Get username from the authenticated org
+            username = SalesforceCLI.get_username_from_alias(alias)
+            if username:
+                # Check if we have local config for this org
+                if (config_manager.orgs_dir / config_manager._sanitize_username(username)).exists():
+                    click.echo(f"Org with alias '{alias}' is already authenticated and configured.")
+                    return
+                else:
+                    # Get org info to create local config
+                    org_info = SalesforceCLI.get_org_info(alias)
+                    if org_info:
+                        click.echo(f"Found authenticated org. Creating local configuration...")
+                        result = org_info
+                    else:
+                        click.echo("Failed to get org info.", err=True)
+                        return
+            else:
+                click.echo("Failed to get username for authenticated org.", err=True)
+                return
         else:
-            click.echo("Authentication failed.", err=True)
-            return
+            # Authenticate the org using Salesforce CLI
+            print("Authenticating org with Salesforce CLI, please wait after successful login...")
+            result = SalesforceCLI.authenticate_org(alias)
+            if result:
+                click.echo("Authentication successful.")
+                logger.debug(f"Org info received: {result}")
+            else:
+                click.echo("Authentication failed.", err=True)
+                return
 
-        # Get username from the authenticated org
-        result = org_info.get('result', {})
+        # Get username from the org info
         username = result.get('username')
+        print(f"Result check from org info: { result}")
+        if not username:
+            # Try to get username from the authorization message
+            auth_result = result.get('result', {})
+            if isinstance(auth_result, str) and 'Successfully authorized' in auth_result:
+                # Extract username from authorization message
+                import re
+                match = re.search(r'Successfully authorized (.*?) with org ID', auth_result)
+                if match:
+                    username = match.group(1)
+        
+        if not username:
+            click.echo("Failed to get username from org info.", err=True)
+            return
+            
         logger.debug(f"Username from org info: {username}")
         
         # Create OrgDetails instance
         logger.debug("Creating OrgDetails instance")
         org_details = OrgDetails(
             username=username,
-            instance_url=result.get('instanceUrl', ''),
-            login_url=result.get('loginUrl', 'https://login.salesforce.com'),  # Use default if not provided
-            org_id=result.get('orgId', ''),
+            instance_url=result.get('result', {}).get('instanceUrl', ''),
+            login_url=result.get('result', {}).get('loginUrl', 'https://login.salesforce.com'),
+            org_id=result.get('result', {}).get('orgId', ''),
             alias=alias
         )
         logger.debug(f"Created org_details: {org_details.to_dict()}")
@@ -346,7 +377,7 @@ def show(crawler, ingestor, org):
 @click.option('--whitelist', help='Set whitelist (comma-separated values)')
 @click.option('--param', '-p', multiple=True, help='Additional parameters in key=value format')
 @click.option('--org', help='Username or alias of the org to configure')
-def set(page_limit, crawl_url, api_key, whitelist, param, org):
+def set_crawler(page_limit, crawl_url, api_key, whitelist, param, org):
     """Configure crawler settings
     
     Set crawler configuration globally or for a specific org.
@@ -416,7 +447,7 @@ def set(page_limit, crawl_url, api_key, whitelist, param, org):
 @click.option('--source-name', help='Set source name')
 @click.option('--max-concurrent-jobs', type=int, help='Set max concurrent jobs')
 @click.option('--org', help='Username or alias of the org to configure')
-def set(object_api_name, source_name, max_concurrent_jobs, org):
+def set_ingestor(object_api_name, source_name, max_concurrent_jobs, org):
     """Configure ingestor settings
     
     Set ingestor configuration globally or for a specific org.
@@ -472,45 +503,18 @@ def set(object_api_name, source_name, max_concurrent_jobs, org):
 @click.option('--api-key', help='Override API key')
 @click.option('--whitelist', help='Override whitelist (comma-separated)')
 @click.option('--param', '-p', multiple=True, help='Additional parameters (key=value)')
-async def crawl(org, output_path, page_limit, crawl_url, api_key, whitelist, param):
-    """Execute the crawler to fetch data
-    
-    Crawls data using configured or overridden crawler settings.
-    Results are stored in the org's directory by default,
-    or in a custom location if specified.
-    
-    Examples:
-        mindstream crawl
-        mindstream crawl --org myorg
-        mindstream crawl --output-path ./custom/path
-        mindstream crawl --page-limit 100 --crawl-url "https://example.com"
-        mindstream crawl -p respect_robots=true -p custom_param=value
-    
-    Configuration Options:
-        --org           Username or alias of the org to use
-        --output-path   Custom path to store crawled data
-        --page-limit    Override configured page limit
-        --crawl-url     Override configured crawl URL
-        --api-key       Override configured API key
-        --whitelist     Override configured whitelist (comma-separated)
-        --param, -p     Additional parameters in key=value format
-    
-    Additional Parameters:
-        Common -p options:
-        - respect_robots=true/false
-        - metadata=true/false
-        - readability=true/false
-        - Any other crawler-specific parameters
-    """
+def crawl(org, output_path, page_limit, crawl_url, api_key, whitelist, param):
+    """Execute the crawler to fetch data"""
     try:
         config = get_effective_config(org)
         
-        # Create override crawler config
+        # Create override crawler config with existing values from config
         crawler_config = CrawlerDefaults(
             page_limit=page_limit or config.crawler.page_limit,
             crawl_url=crawl_url or config.crawler.crawl_url,
             api_key=api_key or config.crawler.api_key,
-            whitelist=whitelist.split(',') if whitelist else config.crawler.whitelist
+            whitelist=whitelist.split(',') if whitelist else config.crawler.whitelist,
+            additional_params=config.crawler.additional_params.copy()
         )
         
         if param:
@@ -521,10 +525,11 @@ async def crawl(org, output_path, page_limit, crawl_url, api_key, whitelist, par
         
         # Execute crawler
         crawler = DataCrawler(output_folder, crawler_config)
-        result = await crawler.crawl()
+        result = asyncio.run(crawler.crawl())  # Use asyncio.run to execute the coroutine
         click.echo(f"Crawl completed. Results stored in: {result}")
         
     except Exception as e:
+        logger.error(f"Crawl error: {str(e)}", exc_info=True)
         click.echo(f"Error: {str(e)}", err=True)
 
 @cli.command()
@@ -728,7 +733,13 @@ def main():
     csv_output_folder = org_dir / "csv_files"
     
     # Crawl data
-    crawler = DataCrawler(output_folder, api_key, crawl_url, whitelist, page_limit)
+    crawler_config = CrawlerDefaults(
+        page_limit=page_limit,
+        crawl_url=crawl_url,
+        api_key=api_key,
+        whitelist=whitelist
+    )
+    crawler = DataCrawler(output_folder, crawler_config)
     crawler.crawl()
 
     # Convert JSON to CSV
@@ -790,7 +801,7 @@ def help():
     click.echo("""
 Commands:
   org
-    ├── add                 Add and authenticate a new Salesforce org
+    ── add                 Add and authenticate a new Salesforce org
     ├── use                 Set the current working org
     ├── list               List all connected orgs
     ├── login              Re-authenticate an existing org
@@ -840,3 +851,4 @@ Examples:
 
 if __name__ == "__main__":
     cli()
+

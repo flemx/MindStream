@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 from functools import wraps
+import inspect
 
 # Create logger
 logger = logging.getLogger('mindstream')
@@ -45,16 +46,29 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f'mindstream.{name}')
 
 def log_function_call(func):
-    """Decorator to log function entry and exit"""
+    """Decorator to log function entry and exit with file, class, and line information"""
     @wraps(func)
     def wrapper(*args, **kwargs):
         func_logger = get_logger(func.__module__)
-        func_logger.debug(f"Entering {func.__name__}")
+        # Get the frame info for the caller
+        frame = inspect.currentframe().f_back
+        filename = frame.f_code.co_filename
+        lineno = frame.f_lineno
+        # Get class name if method is part of a class
+        class_name = ''
+        if args and hasattr(args[0], '__class__'):
+            class_name = f"{args[0].__class__.__name__}."
+        
+        location = f"[{filename}:{lineno}] {class_name}{func.__name__}"
+        
+        func_logger.debug(f"Entering {location}")
         try:
             result = func(*args, **kwargs)
-            func_logger.debug(f"Exiting {func.__name__}")
+            func_logger.debug(f"Exiting {location}")
             return result
         except Exception as e:
-            func_logger.exception(f"Exception in {func.__name__}: {str(e)}")
+            func_logger.exception(f"Exception in {location}: {str(e)}")
             raise
+        finally:
+            del frame  # Clean up frame reference
     return wrapper

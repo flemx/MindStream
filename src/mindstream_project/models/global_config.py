@@ -1,40 +1,37 @@
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional
 from mindstream_project.utils.logging_config import get_logger, log_function_call
 
 logger = get_logger(__name__)
 
 @dataclass
 class CrawlerDefaults:
-    page_limit: int = 50
+    page_limit: int = 100
     crawl_url: str = ""
     api_key: str = ""
-    whitelist: List[str] = None
-    additional_params: Dict[str, Any] = None
+    whitelist: List[str] = field(default_factory=list)
+    additional_params: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        """Initialize default values for None fields"""
-        logger.debug("Initializing CrawlerDefaults")
-        if self.whitelist is None:
-            logger.debug("Setting default empty whitelist")
-            self.whitelist = []
-        if self.additional_params is None:
-            logger.debug("Setting default empty additional_params")
-            self.additional_params = {}
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CrawlerDefaults':
+        if not data:
+            return cls()
+        return cls(
+            page_limit=data.get('page_limit', 100),
+            crawl_url=data.get('crawl_url', ''),
+            api_key=data.get('api_key', ''),
+            whitelist=data.get('whitelist', []),
+            additional_params=data.get('additional_params', {})
+        )
 
-    @log_function_call
-    def to_dict(self) -> dict:
-        """Convert CrawlerDefaults instance to a dictionary."""
-        logger.debug("Converting CrawlerDefaults to dictionary")
-        result = {
+    def to_dict(self) -> Dict[str, Any]:
+        return {
             'page_limit': self.page_limit,
             'crawl_url': self.crawl_url,
-            'api_key': '***' if self.api_key else '',  # Mask API key in logs
+            'api_key': self.api_key,
             'whitelist': self.whitelist,
             'additional_params': self.additional_params
         }
-        logger.debug(f"CrawlerDefaults dictionary (with masked api_key): {result}")
-        return result
 
     @log_function_call
     def get_api_payload(self) -> dict:
@@ -56,9 +53,26 @@ class CrawlerDefaults:
 
 @dataclass
 class IngestorDefaults:
-    object_api_name: str = 'Document'
-    source_name: str = 'mindstream_data'
+    object_api_name: str = ""
+    source_name: str = ""
     max_concurrent_jobs: int = 5
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'IngestorDefaults':
+        if not data:
+            return cls()
+        return cls(
+            object_api_name=data.get('object_api_name', ''),
+            source_name=data.get('source_name', ''),
+            max_concurrent_jobs=data.get('max_concurrent_jobs', 5)
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'object_api_name': self.object_api_name,
+            'source_name': self.source_name,
+            'max_concurrent_jobs': self.max_concurrent_jobs
+        }
 
     @log_function_call
     def to_dict(self) -> dict:

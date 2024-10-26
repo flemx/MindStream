@@ -96,14 +96,58 @@ class ConfigManager:
     def set_org_config(self, username: str, config: OrgDetails):
         """Update configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
-        existing_config = OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='https://login.salesforce.com', org_id='')
+        existing_config = OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(
+            username=username, 
+            instance_url='', 
+            login_url='https://login.salesforce.com', 
+            org_id='',
+            crawler=CrawlerDefaults(),  # Initialize with defaults
+            ingestor=IngestorDefaults()  # Initialize with defaults
+        )
+        
+        # Update the config while preserving defaults
+        if not existing_config.crawler:
+            existing_config.crawler = CrawlerDefaults()
+        if not existing_config.ingestor:
+            existing_config.ingestor = IngestorDefaults()
+        
         existing_config.updated_at = datetime.now()
         self._save_json(config_path, existing_config.to_dict())
 
     def get_org_config(self, username: str) -> OrgDetails:
         """Get configuration for a specific org"""
-        config_path = self.get_org_path(username) / 'config.json'
-        return OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='https://login.salesforce.com', org_id='')
+        logger.debug(f"Getting configuration for org: {username}")
+        config_file = self.orgs_dir / self._sanitize_username(username) / 'config.json'
+        
+        try:
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    data = json.load(f)
+            else:
+                logger.warning(f"No configuration file found for org: {username}")
+                data = {}
+            
+            # Create OrgDetails instance with default configurations
+            org_details = OrgDetails.from_dict(data)
+            
+            # Ensure crawler and ingestor are initialized
+            if not org_details.crawler:
+                org_details.crawler = CrawlerDefaults()
+            if not org_details.ingestor:
+                org_details.ingestor = IngestorDefaults()
+            
+            return org_details
+            
+        except Exception as e:
+            logger.error(f"Error reading org configuration: {e}", exc_info=True)
+            # Return a default configuration with initialized crawler and ingestor
+            return OrgDetails(
+                username=username,
+                instance_url="",
+                org_id="",
+                crawler=CrawlerDefaults(),
+                ingestor=IngestorDefaults()
+            )
 
     def set_default_org(self, username: str):
         """Set the default org in the global config"""
@@ -155,8 +199,8 @@ class ConfigManager:
         """Update global configuration"""
         current_config = self.get_global_config()
         current_config.current_org = config.current_org
-        current_config.version = config.version
-        current_config.defaults = config.defaults
+        current_config.crawler = config.crawler  # Update crawler defaults
+        current_config.ingestor = config.ingestor  # Update ingestor defaults
         self._save_json(self.global_config_path, current_config.to_dict())
 
     def get_default(self, key: str, default=None):

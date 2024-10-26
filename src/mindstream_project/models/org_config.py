@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from mindstream_project.utils.logging_config import get_logger, log_function_call
 import logging
 
@@ -16,43 +16,42 @@ class OrgDetails:
     login_url: str = "https://login.salesforce.com"  # Default value
     alias: Optional[str] = None
     consumer_key: Optional[str] = None
+    access_token: Optional[str] = None  # Add this field
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     crawler: Optional[CrawlerDefaults] = None
     ingestor: Optional[IngestorDefaults] = None
 
     @classmethod
-    @log_function_call
-    def from_dict(cls, data: dict) -> 'OrgDetails':
-        """Create an OrgDetails instance from a dictionary"""
-        logger.debug(f"Creating OrgDetails from dictionary: {data}")
+    def from_dict(cls, data: Dict[str, Any]) -> 'OrgDetails':
+        if not data:
+            return cls(username="", instance_url="", login_url="", org_id="")
         
-        try:
-            # Handle datetime conversions
-            if 'created_at' in data and isinstance(data['created_at'], str):
-                logger.debug(f"Converting created_at from string: {data['created_at']}")
-                data['created_at'] = datetime.fromisoformat(data['created_at'])
-            
-            if 'updated_at' in data and isinstance(data['updated_at'], str):
-                logger.debug(f"Converting updated_at from string: {data['updated_at']}")
-                data['updated_at'] = datetime.fromisoformat(data['updated_at'])
-            
-            # Convert crawler and ingestor settings
-            if 'crawler' in data:
-                logger.debug("Converting crawler settings to CrawlerDefaults")
-                data['crawler'] = CrawlerDefaults(**data['crawler'])
-            
-            if 'ingestor' in data:
-                logger.debug("Converting ingestor settings to IngestorDefaults")
-                data['ingestor'] = IngestorDefaults(**data['ingestor'])
-            
-            instance = cls(**data)
-            logger.debug(f"Successfully created OrgDetails instance: {instance}")
-            return instance
-            
-        except Exception as e:
-            logger.error(f"Error creating OrgDetails from dictionary: {str(e)}")
-            raise
+        # Initialize default configurations if not present
+        crawler_data = data.get('crawler', {})
+        ingestor_data = data.get('ingestor', {})
+        
+        # Create CrawlerDefaults and IngestorDefaults instances
+        crawler = CrawlerDefaults.from_dict(crawler_data)
+        ingestor = IngestorDefaults.from_dict(ingestor_data)
+        
+        # Parse datetime strings if present
+        created_at = datetime.fromisoformat(data['created_at']) if data.get('created_at') else None
+        updated_at = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else None
+        
+        return cls(
+            username=data.get('username', ''),
+            instance_url=data.get('instance_url', ''),
+            org_id=data.get('org_id', ''),
+            login_url=data.get('login_url', 'https://login.salesforce.com'),
+            alias=data.get('alias'),
+            consumer_key=data.get('consumer_key'),
+            access_token=data.get('access_token'),
+            created_at=created_at,
+            updated_at=updated_at,
+            crawler=crawler,
+            ingestor=ingestor
+        )
 
     @log_function_call
     def to_dict(self) -> dict:
