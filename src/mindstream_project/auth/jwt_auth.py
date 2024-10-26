@@ -10,6 +10,9 @@ from ..utils.config_manager import ConfigManager
 import shutil
 import re
 from mindstream_project.utils.salesforce_cli import SalesforceCLI
+from mindstream_project.utils.logging_config import get_logger, log_function_call
+
+logger = get_logger(__name__)
 
 config_manager = ConfigManager()
 
@@ -21,86 +24,104 @@ class Config:
 
 def generate_certificates(org_dir: Path):
     """Generate SSL certificates and update connected app XML for a specific org."""
-    CERT_DIR = org_dir / 'certificates'
-    KEY_PATH = CERT_DIR / 'salesforce.key'
-    CERT_PATH = CERT_DIR / 'salesforce.crt'
-    MDAPI_DIR = org_dir / 'mdapi'
-    CONNECTED_APP_DIR = MDAPI_DIR / 'connectedApps'
-    CONNECTED_APP_PATH = CONNECTED_APP_DIR / 'dc_injest.connectedApp'
-    
-    # Create certificates directory if it doesn't exist
-    CERT_DIR.mkdir(exist_ok=True)
-
-    print("Generating SSL certificates...")
-    # Generate certificate and key
     try:
-        subprocess.run([
-            'openssl', 'req', '-x509', '-sha256', '-nodes',
-            '-days', '36500', '-newkey', 'rsa:2048',
-            '-keyout', str(KEY_PATH),
-            '-out', str(CERT_PATH),
-            '-subj', '/CN=MindstreamCert'  # Automatically fill certificate info
-        ], check=True)
-        print("Certificates generated successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error generating certificates: {e}")
-        sys.exit(1)
-
-    # Copy MDAPI files to org directory
-    source_mdapi_dir = Path('salesforce_metadata') / 'mindstream' / 'mdapi'
-    if not source_mdapi_dir.exists():
-        print(f"Error: MDAPI source directory does not exist at: {source_mdapi_dir}")
-        sys.exit(1)
-    
-    # Create parent directories if they don't exist
-    MDAPI_DIR.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Remove existing MDAPI directory if it exists
-    if MDAPI_DIR.exists():
-        shutil.rmtree(MDAPI_DIR)
-    
-    # Copy the directory
-    try:
-        shutil.copytree(source_mdapi_dir, MDAPI_DIR)
-        print(f"MDAPI files copied from {source_mdapi_dir} to {MDAPI_DIR}")
-    except Exception as e:
-        print(f"Error copying MDAPI files: {e}")
-        sys.exit(1)
-
-    print("Updating Connected App XML with certificate...")
-    # Update XML file with certificate
-    try:
-        cert_content = CERT_PATH.read_text().strip()
-        connected_app_path = CONNECTED_APP_PATH
-        xml_content = connected_app_path.read_text()
+        logger.debug(f"Starting certificate generation for org directory: {org_dir}")
+        CERT_DIR = org_dir / 'certificates'
+        KEY_PATH = CERT_DIR / 'salesforce.key'
+        CERT_PATH = CERT_DIR / 'salesforce.crt'
+        MDAPI_DIR = org_dir / 'mdapi'
+        CONNECTED_APP_DIR = MDAPI_DIR / 'connectedApps'
+        CONNECTED_APP_PATH = CONNECTED_APP_DIR / 'dc_injest.connectedApp'
         
-        # Insert certificate into <certificate></certificate> tag
-        new_xml_content = re.sub(
-            r'<certificate>.*?</certificate>',
-            f'<certificate>{cert_content}</certificate>',
-            xml_content,
-            flags=re.DOTALL
-        )
+        logger.debug(f"Working with org directory: {org_dir}")
+        logger.debug("Creating certificates directory if it doesn't exist")
         
-        connected_app_path.write_text(new_xml_content)
-        print("Connected App XML updated successfully.")
-    except Exception as e:
-        print(f"Error updating Connected App XML file: {e}")
-        sys.exit(1)
+        # Create certificates directory if it doesn't exist
+        CERT_DIR.mkdir(exist_ok=True)
 
-    # Deploy metadata to Salesforce org
-    org_config = config_manager.get_org_config(org_dir.name.replace('_at_', '@').replace('_dot_', '.'))
-    alias = org_config.get('alias') or org_config.get('username')
-    
-    print("Deploying metadata to Salesforce org...")
-    if SalesforceCLI.deploy_metadata(str(MDAPI_DIR), alias):
-        print("Metadata deployed successfully to org.")
-    else:
-        print("Error deploying metadata to Salesforce org")
-        sys.exit(1)
+        print("Generating SSL certificates...")
+        logger.debug("Running OpenSSL command to generate certificates")
+        # Generate certificate and key
+        try:
+            subprocess.run([
+                'openssl', 'req', '-x509', '-sha256', '-nodes',
+                '-days', '36500', '-newkey', 'rsa:2048',
+                '-keyout', str(KEY_PATH),
+                '-out', str(CERT_PATH),
+                '-subj', '/CN=MindstreamCert'  # Automatically fill certificate info
+            ], check=True)
+            print("Certificates generated successfully.")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error generating certificates: {e}")
+            sys.exit(1)
+
+        # Copy MDAPI files to org directory
+        source_mdapi_dir = Path('salesforce_metadata') / 'mindstream' / 'mdapi'
+        if not source_mdapi_dir.exists():
+            logger.error(f"Error: MDAPI source directory does not exist at: {source_mdapi_dir}")
+            sys.exit(1)
+        
+        # Create parent directories if they don't exist
+        MDAPI_DIR.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Remove existing MDAPI directory if it exists
+        if MDAPI_DIR.exists():
+            shutil.rmtree(MDAPI_DIR)
+        
+        # Copy the directory
+        try:
+            shutil.copytree(source_mdapi_dir, MDAPI_DIR)
+            logger.debug(f"MDAPI files copied from {source_mdapi_dir} to {MDAPI_DIR}")
+        except Exception as e:
+            logger.error(f"Error copying MDAPI files: {e}")
+            sys.exit(1)
+
+        logger.debug("Updating Connected App XML with certificate...")
+        logger.debug("Updating Connected App XML with new certificate content")
+        # Update XML file with certificate
+        try:
+            cert_content = CERT_PATH.read_text().strip()
+            connected_app_path = CONNECTED_APP_PATH
+            xml_content = connected_app_path.read_text()
+            
+            # Insert certificate into <certificate></certificate> tag
+            new_xml_content = re.sub(
+                r'<certificate>.*?</certificate>',
+                f'<certificate>{cert_content}</certificate>',
+                xml_content,
+                flags=re.DOTALL
+            )
+            
+            connected_app_path.write_text(new_xml_content)
+            logger.debug("Connected App XML updated successfully")
+        except Exception as e:
+            logger.error(f"Error updating Connected App XML file: {e}")
+            sys.exit(1)
+
+        # Deploy metadata to Salesforce org
+        org_username = org_dir.name.replace('_at_', '@').replace('_dot_', '.')
+        logger.debug(f"Getting org config for username: {org_username}")
+        org_config = config_manager.get_org_config(org_username)
+        logger.debug(f"Org config type: {type(org_config)}")
+        logger.debug(f"Org config content: {org_config.to_dict()}")
+        
+        alias = org_config.alias or org_config.username
+        logger.debug(f"Using alias/username for deployment: {alias}")
+        logger.debug(f"Deploying metadata to Salesforce org with alias: {alias}")
+
+        logger.debug("Deploying metadata to Salesforce org...")
+        if SalesforceCLI.deploy_metadata(str(MDAPI_DIR), alias):
+            logger.debug("Metadata deployed successfully to org.")
+        else:
+            logger.error("Error deploying metadata to Salesforce org")
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error in generate_certificates: {str(e)}", exc_info=True)
+        raise
 
 async def generate_access_token(username: str = None):
     """Generate access token for specified org or current org"""
+    logger.debug(f"Generating access token for username: {username}")
     if not username:
         global_config = config_manager.get_global_config()
         username = global_config.current_org
@@ -147,6 +168,7 @@ async def generate_access_token(username: str = None):
     )
 
     print(f"Generated JWT token for {username}")
+    logger.debug(f"JWT token generated for {username}")
 
     async with httpx.AsyncClient() as client:
         # Get Salesforce Auth Token using dynamic login_url
@@ -160,7 +182,9 @@ async def generate_access_token(username: str = None):
                 }
             )
             response_sf.raise_for_status()
+            logger.debug("Salesforce Auth Token obtained successfully")
         except httpx.HTTPError as e:
+            logger.error(f"Error getting Salesforce token: {e}", exc_info=True)
             raise Exception(f"Error getting Salesforce token: {e}")
 
         auth_sf = response_sf.json()
@@ -179,7 +203,9 @@ async def generate_access_token(username: str = None):
                 }
             )
             response_dc.raise_for_status()
+            logger.debug("Data Cloud Auth Token obtained successfully")
         except httpx.HTTPError as e:
+            logger.error(f"Error getting Data Cloud token: {e}", exc_info=True)
             raise Exception(f"Error getting Data Cloud token: {e}")
 
         auth_dc = response_dc.json()
@@ -190,9 +216,11 @@ async def generate_access_token(username: str = None):
 
 async def main():
     try:
+        logger.debug("Starting main function")
         auth = await generate_access_token()
         print(auth)
     except Exception as e:
+        logger.error(f"Error in main: {e}", exc_info=True)
         print(f"Error: {e}")
         sys.exit(1)
 

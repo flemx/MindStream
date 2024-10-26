@@ -9,6 +9,7 @@ from mindstream_project.auth.jwt_auth import (
     generate_access_token, 
     generate_certificates
 )
+from mindstream_project.models.org_config import OrgDetails
 from mindstream_project.utils.config_manager import ConfigManager
 import json
 from mindstream_project.utils.salesforce_cli import SalesforceCLI
@@ -16,49 +17,24 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from mindstream_project.models.global_config import CrawlerDefaults, IngestorDefaults
 from pathlib import Path
+from mindstream_project.utils.logging_config import get_logger, setup_logging
 import platform
+import logging
+
+# Initialize the logger
+logger = get_logger(__name__)
 
 # Initialize ConfigManager at module level
 config_manager = ConfigManager()
 
 @click.group()
-@click.version_option(version='1.0.0')
-def cli():
-    """MindStream CLI - Data Pipeline Management Tool
-    
-    Common Commands:
-      org         Manage Salesforce orgs and authentication
-      config      Manage global and org-specific configuration
-      crawl       Execute crawler to fetch data
-      convert     Convert JSON data to CSV format
-      upload      Upload CSV data to Data Cloud
-      pipeline    Run complete pipeline (crawl, convert, upload)
-      open        Open org config directory in file explorer
-    
-    Configuration Commands:
-      config crawler   Configure crawler settings
-      config ingestor  Configure ingestor settings
-    
-    Examples:
-      # Org Management
-      mindstream org add --alias myorg
-      mindstream org use myorg
-      mindstream org list
-      
-      # Configuration
-      mindstream config show
-      mindstream config crawler set --crawl-url URL --api-key KEY
-      mindstream config ingestor set --source-name NAME
-      
-      # Pipeline Operations
-      mindstream crawl --org myorg
-      mindstream convert --org myorg
-      mindstream upload --org myorg
-      mindstream pipeline --org myorg
-    
-    Use 'mindstream COMMAND --help' for detailed information about commands.
-    """
-    pass
+@click.version_option()
+@click.option('--debug', is_flag=True, help='Enable debug logging')
+@click.option('--log-file', type=click.Path(), help='Log file path')
+def cli(debug: bool, log_file: Optional[str]):
+    """MindStream CLI - Data Pipeline Management Tool"""
+    log_file_path = Path(log_file) if log_file else None
+    setup_logging(debug=debug, log_file=log_file_path)
 
 @cli.group()
 def org():
@@ -77,59 +53,61 @@ def org():
 @click.option('--alias', default=None, help='Alias for the Salesforce org')
 @click.option('--default', is_flag=True, help='Set this org as the default org')
 def add(alias, default):
-    """Add and authenticate a new Salesforce org
-    
-    Examples:
-        mindstream org add --alias myorg
-        mindstream org add --alias myorg --default
-    
-    Options:
-        --alias    Optional alias for easier org reference
-        --default  Set this org as the default working org
-    """
-    # Check if the org is already authenticated
-    if SalesforceCLI.is_org_authenticated(alias):
-        click.echo(f"Org with alias '{alias}' is already authenticated.")
-        return
-
-    # Authenticate the org using Salesforce CLI
-    if SalesforceCLI.authenticate_org(alias):
-        click.echo("Authentication successful.")
-    else:
-        click.echo("Authentication failed.", err=True)
-        return
-
-    # Get username from the authenticated org
-    org_info = SalesforceCLI.get_org_info()
-    if not org_info:
-        click.echo("Error getting org information", err=True)
-        return
-    
+    """Add and authenticate a new Salesforce org"""
     try:
-        username = org_info['result']['username']
-        # Extract additional org details
-        org_details = {
-            'username': username,
-            'alias': alias,
-            'instance_url': org_info['result'].get('instanceUrl'),
-            'login_url': org_info['result'].get('loginUrl'),
-            'org_id': org_info['result'].get('orgId'),
-        }
+        logger.debug(f"Starting org add with alias: {alias}, default: {default}")
         
-        # Initialize org directory and configuration with full details
-        org_dir = config_manager.init_org(username, org_details)
-        click.echo(f"Initialized org directory for {username}")
+        # Check if the org is already authenticated
+        if alias and SalesforceCLI.is_org_authenticated(alias):
+            click.echo(f"Org with alias '{alias}' is already authenticated.")
+            return
 
-        # Optionally set as default org
-        if default:
-            config_manager.set_default_org(username)
-            click.echo(f"Set {username} as the default org")
+        # Authenticate the org using Salesforce CLI
+        print("Authenticating org with Salesforce CLI, please wait after successful login...")
+        org_info = SalesforceCLI.authenticate_org(alias)
+        if org_info:
+            click.echo("Authentication successful.")
+            logger.debug(f"Org info received: {org_info}")
+        else:
+            click.echo("Authentication failed.", err=True)
+            return
+
+        # Get username from the authenticated org
+        result = org_info.get('result', {})
+        username = result.get('username')
+        logger.debug(f"Username from org info: {username}")
+        
+        # Create OrgDetails instance
+        logger.debug("Creating OrgDetails instance")
+        org_details = OrgDetails(
+            username=username,
+            instance_url=result.get('instanceUrl', ''),
+            login_url=result.get('loginUrl', 'https://login.salesforce.com'),  # Use default if not provided
+            org_id=result.get('orgId', ''),
+            alias=alias
+        )
+        logger.debug(f"Created org_details: {org_details.to_dict()}")
+        
+        # Initialize org directory and configuration
+        logger.debug("Initializing org directory")
+        org_dir = config_manager.init_org(username, org_details)
+        print(f"Initialized org directory for {username}")
 
         # Generate certificates and deploy metadata
+        logger.debug("Starting certificate generation")
         generate_certificates(org_dir)
         click.echo("Certificates generated and metadata deployed successfully.")
 
+        # Optionally set as default org
+        if default:
+            logger.debug(f"Setting {username} as default org")
+            config_manager.set_default_org(username)
+            click.echo(f"Set {username} as the default org")
+
         click.echo(f"Successfully added and authenticated org: {username}")
+    except Exception as e:
+        logger.error(f"Error in add command: {str(e)}", exc_info=True)
+        click.echo(f"Error adding org: {str(e)}", err=True)
 
 @org.command()
 @click.argument('identifier')
@@ -272,26 +250,14 @@ def parse_additional_params(params: List[str]) -> Dict[str, Any]:
 
 @cli.group()
 def config():
-    """Manage global and org-specific configuration
-    
-    Commands:
-      show            Show current configuration
-      crawler set     Configure crawler settings
-      ingestor set    Configure ingestor settings
-    
-    Examples:
-      mindstream config show
-      mindstream config show --crawler
-      mindstream config show --org myorg
-      mindstream config crawler set --page-limit 100
-      mindstream config ingestor set --source-name "custom_source"
+    """Manage global and org-specific configuration.
     """
     pass
 
 @config.group()
 def crawler():
-    """Manage crawler configuration
-    
+    """Manage crawler configuration.
+
     Options:
       --page-limit    INT     Number of pages to crawl
       --crawl-url     TEXT    URL to crawl
@@ -299,7 +265,7 @@ def crawler():
       --whitelist     TEXT    Comma-separated list of allowed domains
       --param, -p     TEXT    Additional parameters (key=value format)
       --org           TEXT    Username or alias of org to configure
-    
+
     Examples:
       mindstream config crawler set --page-limit 100
       mindstream config crawler set --crawl-url "https://example.com" --org myorg
@@ -309,14 +275,14 @@ def crawler():
 
 @config.group()
 def ingestor():
-    """Manage ingestor configuration
-    
+    """Manage ingestor configuration.
+
     Options:
       --object-api-name      TEXT    Salesforce object API name
       --source-name          TEXT    Source name for ingested data
       --max-concurrent-jobs  INT     Maximum concurrent ingestion jobs
       --org                  TEXT    Username or alias of org to configure
-    
+
     Examples:
       mindstream config ingestor set --object-api-name "CustomDoc"
       mindstream config ingestor set --source-name "custom_source" --org myorg
@@ -328,20 +294,20 @@ def ingestor():
 @click.option('--ingestor', is_flag=True, help='Show only ingestor configuration')
 @click.option('--org', help='Username or alias of the org to show configuration for')
 def show(crawler, ingestor, org):
-    """Show current configuration settings
-    
+    """Show current configuration settings.
+
     Display global defaults or org-specific configuration.
-    
+
     Examples:
-        mindstream config show
-        mindstream config show --crawler
-        mindstream config show --ingestor
-        mindstream config show --org myorg
-    
+      mindstream config show
+      mindstream config show --crawler
+      mindstream config show --ingestor
+      mindstream config show --org myorg
+
     Options:
-        --crawler   Show only crawler settings
-        --ingestor  Show only ingestor settings
-        --org       Show config for specific org (username or alias)
+      --crawler   Show only crawler settings
+      --ingestor  Show only ingestor settings
+      --org       Show config for specific org (username or alias)
     """
     try:
         config_manager = ConfigManager()
@@ -711,26 +677,34 @@ async def pipeline(org, page_limit, crawl_url, api_key, whitelist, param,
 @cli.command()
 @click.option('--org', help='Username or alias of the org to open')
 def open(org):
-    """Open the org's directory in file explorer
-    
-    Opens the directory containing all files for the specified org
-    or the current org if none specified.
-    
-    Examples:
-        mindstream open
-        mindstream open --org myorg
-    
-    Options:
-        --org    Username or alias of the org to open
-    
-    Directory Structure:
-        ~/.mindstream/orgs/<username>/
-        ├── config.json     # Org configuration
-        ├── results/        # Crawler results
-        ├── csv_files/      # Converted CSV files
-        └── logs/          # Operation logs
-    """
-    # ... implementation ...
+    """Open the org's directory in file explorer"""
+    try:
+        # Resolve the username from the org identifier
+        target_username = resolve_username(org) if org else None
+        if not target_username:
+            global_config = config_manager.get_global_config()
+            target_username = global_config.current_org
+            if not target_username:
+                raise click.UsageError("No org selected. Please specify --org or use 'mindstream org use <username>'")
+        
+        # Get the org path
+        org_dir = config_manager.get_org_path(target_username)
+        
+        # Ensure org_dir is a Path object
+        if isinstance(org_dir, str):
+            org_dir = Path(org_dir)
+        
+        # Open the directory in the file explorer
+        if platform.system() == "Windows":
+            subprocess.Popen(["explorer", str(org_dir)])
+        elif platform.system() == "Darwin":
+            subprocess.Popen(["open", str(org_dir)])
+        else:
+            subprocess.Popen(["xdg-open", str(org_dir)])
+        
+        click.echo(f"Opened directory for org: {target_username}")
+    except Exception as e:
+        click.echo(f"Error opening org directory: {str(e)}", err=True)
 
 def main():
     global_config = config_manager.get_global_config()
@@ -827,7 +801,7 @@ Commands:
     ├── crawler
     │   └── set           Configure crawler settings
     └── ingestor
-        └── set           Configure ingestor settings
+        └─ set           Configure ingestor settings
     
   pipeline                 Run the complete pipeline (crawl, convert, ingest)
 

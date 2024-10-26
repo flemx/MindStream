@@ -6,6 +6,9 @@ from typing import Dict, Optional
 from datetime import datetime
 from mindstream_project.models.org_config import OrgDetails
 from mindstream_project.models.global_config import GlobalConfig, CrawlerDefaults, IngestorDefaults
+from mindstream_project.utils.logging_config import get_logger, log_function_call
+
+logger = get_logger(__name__)
 
 class ConfigManager:
     def __init__(self):
@@ -55,11 +58,14 @@ class ConfigManager:
                 current_config.ingestor = defaults.ingestor
             self._save_json(self.global_config_path, current_config.to_dict())
 
+    @log_function_call
     def init_org(self, username: str, org_details: OrgDetails) -> Path:
         """Initialize directory structure for a new org"""
         if not username:
+            logger.error("Username cannot be empty")
             raise ValueError("Username cannot be empty")
             
+        logger.debug(f"Initializing org directory for {username}")
         org_dir = self.orgs_dir / self._sanitize_username(username)
         
         try:
@@ -90,14 +96,14 @@ class ConfigManager:
     def set_org_config(self, username: str, config: OrgDetails):
         """Update configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
-        existing_config = OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='', org_id='')
+        existing_config = OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='https://login.salesforce.com', org_id='')
         existing_config.updated_at = datetime.now()
         self._save_json(config_path, existing_config.to_dict())
 
     def get_org_config(self, username: str) -> OrgDetails:
         """Get configuration for a specific org"""
         config_path = self.get_org_path(username) / 'config.json'
-        return OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='', org_id='')
+        return OrgDetails.from_dict(self._load_json(config_path)) if config_path.exists() else OrgDetails(username=username, instance_url='', login_url='https://login.salesforce.com', org_id='')
 
     def set_default_org(self, username: str):
         """Set the default org in the global config"""
