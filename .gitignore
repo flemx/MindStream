@@ -68,5 +68,3 @@ $RECYCLE.BIN/
 
 # Python Salesforce Functions
 **/.venv/
-# MindStream temporary files
-.mindstream/
