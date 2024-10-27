@@ -68,3 +68,7 @@ $RECYCLE.BIN/
 
 # Python Salesforce Functions
 **/.venv/
+
+
+# Configuration file
+config.json
