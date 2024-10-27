@@ -16,7 +16,7 @@ def cli():
 @click.option('--config-file', type=click.Path(exists=True), help='Path to JSON configuration file')
 @click.option('--bulk-params', help='Bulk ingestion configuration parameters')
 @click.option('--crawler-params', help='Crawler configuration parameters')
-@click.option('--sfdc-params', help='Salesforce authentication parameters')
+@click.option('--sfdc-params', help='Salesforce authentication parameters', default=None)
 def pipeline(config_file, bulk_params, crawler_params, sfdc_params):
     """Run the complete pipeline: crawl, convert, and ingest"""
     try:
@@ -24,13 +24,13 @@ def pipeline(config_file, bulk_params, crawler_params, sfdc_params):
             with open(config_file, 'r') as f:
                 config = json.load(f)
         else:
-            if not any([bulk_params, crawler_params, sfdc_params]):
-                click.echo("Error: Either --config-file or configuration parameters must be provided", err=True)
+            if not any([bulk_params, crawler_params]):
+                click.echo("Error: Either --config-file or bulk-params and crawler-params must be provided", err=True)
                 return
 
             bulk_config = parse_key_value_pairs(bulk_params)
             crawler_config = parse_key_value_pairs(crawler_params)
-            sfdc_config = parse_key_value_pairs(sfdc_params)
+            sfdc_config = parse_key_value_pairs(sfdc_params) if sfdc_params else {}
 
             config = {
                 'bulk_ingest': bulk_config,
