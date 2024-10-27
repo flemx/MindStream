@@ -45,37 +45,47 @@ MindStream is a data processing pipeline that crawls data, converts JSON files t
 
 ### Running the Project
 
-The project provides several commands:
+The pipeline can be configured using three parameter groups or a configuration file.
 
-1. Run the complete pipeline:
-   ```bash
-   mindstream pipeline
-   ```
-
-2. Generate authentication token:
-   ```bash
-   mindstream auth
-   ```
-
-The pipeline command will crawl the data, convert it to CSV, and ingest it into Salesforce Data Cloud.
-
-## Authentication Setup
-
-### 1. Generate SSL Certificates
-Run the following command to generate certificates and update the connected app:
+### Quick Start Example
 
 ```bash
-mindstream auth --generate-cert
+python main.py pipeline \
+--bulk-params "access_token=DC-123 instance_url=https://example.salesforce.com" \
+--crawler-params "api_key=CR-456 crawl_url=https://docs.example.com whitelist=docs" \
+--sfdc-params "access_token=SF-789"
 ```
 
-This will:
-- Create a `certificates` directory in the project root
-- Generate `salesforce.key` and `salesforce.crt`
-- Automatically update the connected app XML with the certificate
-- Add the certificates directory to .gitignore
+``` bash
+export DC_TOKEN="DC-123"
+export CRAWLER_KEY="CR-456"
+export SF_TOKEN="SF-789"
+python main.py pipeline \
+--bulk-params "access_token=$DC_TOKEN instance_url=https://example.salesforce.com" \
+--crawler-params "api_key=$CRAWLER_KEY crawl_url=https://docs.example.com" \
+--sfdc-params "access_token=$SF_TOKEN"
+```
 
-### 2. Generate Access Token
-To generate a new access token:
+### Using Configuration File
+
 ```bash
-mindstream auth
+python main.py pipeline --config-file config.json
 ```
+
+Configuration file example:
+
+```json
+{
+   "bulk_ingest":{
+      "access_token": "DC-123",
+      "instance_url": "https://example.salesforce.com"
+   },
+   "crawler": {
+      "api_key": "CR-456",
+      "crawl_url": "https://docs.example.com",
+      "whitelist": ["docs"]
+   },
+   "sfdc_access_token": "SF-789"
+}
+```
+Note: Replace the example tokens and URLs with your actual configuration values.

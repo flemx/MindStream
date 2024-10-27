@@ -1,6 +1,7 @@
 import os
 import click
 import asyncio
+import json
 from mindstream_project.config import (
     ACCESS_TOKEN,
     INSTANCE_URL,
@@ -23,9 +24,34 @@ def cli():
     pass
 
 @cli.command()
-def pipeline():
+@click.option('--config-file', type=click.Path(exists=True), help='Path to JSON configuration file')
+@click.option('--bulk-params', help='Bulk ingestion configuration parameters')
+@click.option('--crawler-params', help='Crawler configuration parameters')
+@click.option('--sfdc-params', help='Salesforce authentication parameters')
+def pipeline(config_file, bulk_params, crawler_params, sfdc_params):
     """Run the complete pipeline: crawl, convert, and ingest"""
-    main()
+    try:
+        if config_file:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+        else:
+            if not any([bulk_params, crawler_params, sfdc_params]):
+                click.echo("Error: Either --config-file or configuration parameters must be provided", err=True)
+                return
+
+            bulk_config = parse_key_value_pairs(bulk_params)
+            crawler_config = parse_key_value_pairs(crawler_params)
+            sfdc_config = parse_key_value_pairs(sfdc_params)
+
+            config = {
+                'bulk_ingest': bulk_config,
+                'crawler': crawler_config,
+                'sfdc_access_token': sfdc_config.get('access_token')
+            }
+        main(config)
+    except json.JSONDecodeError as e:
+        click.echo(f"Error parsing JSON configuration: {e}", err=True)
+        return
 
 @cli.command()
 @click.option('--generate-cert', is_flag=True, help="Generate new certificates")
@@ -41,10 +67,21 @@ def auth(generate_cert):
     except Exception as e:
         click.echo(f"Error in auth command: {e}", err=True)
 
-def main():
+def main(config):
+    # Extract configuration
+    bulk_ingest_config = config.get('bulk_ingest', {})
+    crawler_config = config.get('crawler', {})
+    sfdc_access_token = config.get('sfdc_access_token')
+
     # Crawl data
     output_folder = "./results/"
-    crawler = DataCrawler(output_folder, API_KEY, CRAWL_URL, WHITELIST, PAGE_LIMIT)
+    crawler = DataCrawler(
+        output_folder,
+        crawler_config.get('api_key'),
+        crawler_config.get('crawl_url'),
+        crawler_config.get('whitelist'),
+        crawler_config.get('page_limit')
+    )
     crawler.crawl()
 
     # Convert JSON to CSV
@@ -59,11 +96,11 @@ def main():
         if f.endswith(".csv")
     ]
     bulk_ingest = DataCloudBulkIngest(
-        ACCESS_TOKEN,
-        INSTANCE_URL,
-        OBJECT_API_NAME,
-        SOURCE_NAME,
-        MAX_CONCURRENT_JOBS,
+        bulk_ingest_config.get('access_token'),
+        bulk_ingest_config.get('instance_url'),
+        bulk_ingest_config.get('object_api_name'),
+        bulk_ingest_config.get('source_name'),
+        bulk_ingest_config.get('max_concurrent_jobs'),
     )
     bulk_ingest.execute_bulk_ingest(csv_files)
 
