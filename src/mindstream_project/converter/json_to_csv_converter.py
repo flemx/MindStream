@@ -2,7 +2,7 @@ import os
 import json
 import csv
 from datetime import datetime
-from bs4 import BeautifulSoup, Tag, Doctype, NavigableString
+from bs4 import BeautifulSoup, Tag, NavigableString
 import re
 import logging
 
